@@ -1,0 +1,25 @@
+{
+	"schemaVersion": 1,
+	"id": "cloudgram",
+	"version": "${version}",
+	"name": "Cloudgram",
+	"description": "Backs up your singleplayer worlds to your own Telegram chat.",
+	"authors": [
+		"sey"
+	],
+	"environment": "client",
+	"entrypoints": {
+		"main": [
+			"dev.cloudgram.Cloudgram"
+		],
+		"client": [
+			"dev.cloudgram.client.CloudgramClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
