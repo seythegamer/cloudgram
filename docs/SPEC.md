@@ -38,9 +38,13 @@ The world directory is scanned recursively. Every regular file is assigned to ex
 
 | Group key | Contents |
 |---|---|
-| `cell:<x>:<z>` | `region/r.X.Z.mca`, `entities/r.X.Z.mca`, `poi/r.X.Z.mca` in **all** dimensions (`DIM-1/`, `DIM1/`, `dimensions/<ns>/<path>/`), grouped by region coordinate |
-| `meta` | `level.dat`, `level.dat_old`, `icon.png`, `.cloudgram/**`, `data/**`, `playerdata/**`, `stats/**`, `advancements/**`, `datapacks/**` |
+| `cell:<x>:<z>` | `region/r.X.Z.mca`, `entities/r.X.Z.mca`, `poi/r.X.Z.mca` in **all** dimensions, grouped by region coordinate |
+| `meta` | `level.dat`, `level.dat_old`, `icon.png`, `.cloudgram/**`, `data/**`, `playerdata/**`, `players/**`, `stats/**`, `advancements/**`, `datapacks/**`, and any per-dimension `dimensions/<ns>/<path>/data/**` |
 | `misc` | anything else (e.g. `forcedchunks.dat`, unknown mod files) |
+
+Since Minecraft 26.x, the overworld lives under `dimensions/minecraft/overworld/` and region files
+are `dimensions/<namespace>/<path>/region/r.X.Z.mca`; top-level `region/` from older worlds is
+still recognised.
 
 Grouping by region coordinate keeps the layout of a single play session together: exploring one
 area rewrites a handful of cells, so only those packs change between snapshots.
@@ -137,6 +141,19 @@ not exist):
 - `prev` points at the previous snapshot of the same world, or is absent for the first one.
 - `stats.rawBytes` is the sum of source file sizes; `packBytes` the sum of pack sizes.
 - Manifests are small (tens of KB) and are not split.
+
+### Local staging (before upload)
+
+Until the upload queue exists, snapshots are written to a local vault:
+
+```
+<gameDir>/cloudgram/vault/<worldId[0..8]>/<snapshotId>/
+    manifest.json
+    packs/<safePackId>.cgp
+```
+
+The manifest is written last; a directory without one is an incomplete run and is deleted by the
+producer. `safePackId` follows the rule in §5.
 
 ## 7. What this format deliberately does not do
 

@@ -26,6 +26,7 @@ public final class PackPlanner {
 			".cloudgram/",
 			"data/",
 			"playerdata/",
+			"players/",
 			"stats/",
 			"advancements/",
 			"datapacks/");
@@ -102,6 +103,10 @@ public final class PackPlanner {
 			}
 		}
 		if (ROOT_META_FILES.contains(path)) {
+			return "meta";
+		}
+		// Since 26.x per-dimension state lives under dimensions/<ns>/<path>/data/...
+		if (path.contains("/data/")) {
 			return "meta";
 		}
 		return "misc";

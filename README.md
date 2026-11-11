@@ -6,7 +6,8 @@ Back up your singleplayer Minecraft worlds to **your own Telegram bot chat**.
 - Snapshots are encrypted before upload.
 - Telegram is treated as a transport, not as the only copy: the local save always stays on disk.
 
-> Status: early development. Nothing is uploaded yet; the mod currently only hooks the world lifecycle and logs what it sees.
+> Status: early development. Leaving a world force-saves it and packs it into the local vault
+> (`run/cloudgram/vault` during development). Nothing is uploaded to Telegram yet.
 
 ## Requirements
 
@@ -25,6 +26,17 @@ $env:JAVA_HOME = '<path-to-jdk-25>'
 
 The Gradle wrapper pins Gradle 9.8.2; no global Gradle install is needed.
 
+For an automated end-to-end check, the client has a development-only hook that leaves the world
+the same way the pause menu does:
+
+```powershell
+$env:JAVA_TOOL_OPTIONS = '-Dcloudgram.selftest.leaveAfterTicks=120'
+.\gradlew.bat runClient --args="--quickPlaySingleplayer <levelId>"
+```
+
+The hook is inert outside `fabric.development=true` and does nothing unless that property is set.
+The resulting snapshot lands in `run/cloudgram/vault/<worldId[0..8]>/<snapshotId>/`.
+
 ## Snapshot format
 
 The pack, manifest and splitting rules are defined in [`docs/SPEC.md`](docs/SPEC.md). That file is
@@ -37,6 +49,9 @@ the contract between the snapshot engine, the upload queue and the restore path;
 2. Press **Start** in the bot chat; the mod binds to that chat automatically.
 3. Quit a world → the world is force-saved, packed, encrypted and uploaded.
 4. On another PC, the pinned catalog lists your snapshots; restore as a copy, never silently over an existing world.
+
+Currently implemented: steps 3's local half (force-save, pack, manifest). Upload, restore and the
+UI are the next milestones.
 
 ## Licence
 

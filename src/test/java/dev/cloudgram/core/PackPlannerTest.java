@@ -155,6 +155,34 @@ class PackPlannerTest {
 	}
 
 	@Test
+	void handlesThe26WorldLayout() throws IOException {
+		Path world = tempDir.resolve("world");
+		TestWorlds.write(world, "level.dat", 64);
+		TestWorlds.write(world, "dimensions/minecraft/overworld/region/r.0.0.mca", 32);
+		TestWorlds.write(world, "dimensions/minecraft/overworld/data/minecraft/world_border.dat", 16);
+		TestWorlds.write(world, "dimensions/minecraft/the_nether/region/r.0.0.mca", 32);
+		TestWorlds.write(world, "data/minecraft/game_rules.dat", 16);
+		TestWorlds.write(world, "players/00000000-0000-0000-0000-000000000000.dat", 16);
+
+		List<PackGroup> packs = new PackPlanner(PackOptions.defaults()).plan(world);
+		Map<String, PackGroup> byId = packs.stream()
+				.collect(Collectors.toMap(PackGroup::id, Function.identity()));
+
+		assertEquals(
+				List.of(
+						"dimensions/minecraft/overworld/region/r.0.0.mca",
+						"dimensions/minecraft/the_nether/region/r.0.0.mca"),
+				paths(byId.get("cell:0:0")));
+		assertEquals(
+				List.of(
+						"data/minecraft/game_rules.dat",
+						"dimensions/minecraft/overworld/data/minecraft/world_border.dat",
+						"level.dat",
+						"players/00000000-0000-0000-0000-000000000000.dat"),
+				paths(byId.get("meta")));
+	}
+
+	@Test
 	void rejectsMissingWorldDirectory() {
 		assertThrows(IOException.class, () -> new PackPlanner(PackOptions.defaults()).plan(tempDir.resolve("nope")));
 	}
