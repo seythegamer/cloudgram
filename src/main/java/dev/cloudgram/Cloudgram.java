@@ -116,7 +116,8 @@ public final class Cloudgram implements ModInitializer {
 		return FabricLoader.getInstance().getGameDir().resolve(MOD_ID).resolve("vault");
 	}
 
-	private static String deviceName() {
+	/** A human-readable device name, used only in the snapshot manifest and the setup greeting. */
+	public static String deviceName() {
 		String name = System.getenv("COMPUTERNAME");
 		if (name == null || name.isBlank()) {
 			name = System.getenv("HOSTNAME");
@@ -124,7 +125,8 @@ public final class Cloudgram implements ModInitializer {
 		return name == null || name.isBlank() ? "unknown" : name;
 	}
 
-	private static String modVersion() {
+	/** The mod version from {@code fabric.mod.json}, or {@code dev} when unavailable. */
+	public static String modVersion() {
 		return FabricLoader.getInstance()
 				.getModContainer(MOD_ID)
 				.map(container -> container.getMetadata().getVersion().getFriendlyString())

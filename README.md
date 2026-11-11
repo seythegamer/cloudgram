@@ -3,11 +3,12 @@
 Back up your singleplayer Minecraft worlds to **your own Telegram bot chat**.
 
 - No account, no server, no relay — the mod talks straight to `api.telegram.org` with a bot token you create.
-- Snapshots are encrypted before upload.
+- Snapshots are designed to be encrypted before upload.
 - Telegram is treated as a transport, not as the only copy: the local save always stays on disk.
 
-> Status: early development. Leaving a world force-saves it and packs it into the local vault
-> (`run/cloudgram/vault` during development). Nothing is uploaded to Telegram yet.
+> Status: the setup wizard works: paste a BotFather token, bind a private chat, and the config is
+> remembered. Leaving a world force-saves it and packs it into the local vault
+> (`run/cloudgram/vault` during development). Upload, encryption and restore are next.
 
 ## Requirements
 
@@ -37,6 +38,24 @@ $env:JAVA_TOOL_OPTIONS = '-Dcloudgram.selftest.leaveAfterTicks=120'
 The hook is inert outside `fabric.development=true` and does nothing unless that property is set.
 The resulting snapshot lands in `run/cloudgram/vault/<worldId[0..8]>/<snapshotId>/`.
 
+The wizard can be opened directly (the normal way is the **Cloudgram** button on the title screen):
+
+```powershell
+$env:JAVA_TOOL_OPTIONS = '-Dcloudgram.selftest.openSetup=true'
+.\gradlew.bat runClient
+```
+
+## Connecting your bot
+
+See [`docs/SETUP.md`](docs/SETUP.md) for the BotFather steps, the binding flow, troubleshooting
+and where the token is stored. The short version:
+
+1. Create a bot with [@BotFather](https://t.me/BotFather), copy its token.
+2. Title screen → **Cloudgram** → paste → **Verify token**.
+3. **Open bot chat** → press **Start** → **I pressed Start**.
+4. The status line shows **Connected to …**; the bot and chat are remembered in
+   `config/cloudgram.json`.
+
 ## Snapshot format
 
 The pack, manifest and splitting rules are defined in [`docs/SPEC.md`](docs/SPEC.md). That file is
@@ -45,13 +64,21 @@ the contract between the snapshot engine, the upload queue and the restore path;
 
 ## How it is meant to work
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) and paste the token into the mod.
-2. Press **Start** in the bot chat; the mod binds to that chat automatically.
-3. Quit a world → the world is force-saved, packed, encrypted and uploaded.
-4. On another PC, the pinned catalog lists your snapshots; restore as a copy, never silently over an existing world.
+1. Create a bot with [@BotFather](https://t.me/BotFather) and paste the token into the mod. ✅
+2. Press **Start** in the bot chat; the mod binds to that chat automatically. ✅
+3. Quit a world → the world is force-saved, packed, encrypted and uploaded. ⏳ local packing works
+4. On another PC, the pinned catalog lists your snapshots; restore as a copy, never silently over an existing world. ⏳
 
-Currently implemented: steps 3's local half (force-save, pack, manifest). Upload, restore and the
-UI are the next milestones.
+Currently implemented: the setup wizard and the local half of step 3 (force-save, pack,
+manifest). Upload, encryption and restore are the next milestones.
+
+## Security notes
+
+- The bot token is stored in plain text in `config/cloudgram.json`. On POSIX systems the file is
+  created with owner-only permissions; on Windows it relies on the user profile ACLs. DPAPI
+  encryption is planned.
+- The mod never sends the token anywhere except `api.telegram.org`, and never logs it.
+- Leaked tokens are revoked in BotFather (**Revoke current token**), not by editing files.
 
 ## Licence
 

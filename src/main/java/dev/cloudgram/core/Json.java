@@ -4,7 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 /** Shared Gson configuration for the on-disk and on-Telegram JSON documents. */
-final class Json {
+public final class Json {
 	private static final Gson GSON = new GsonBuilder()
 			.setPrettyPrinting()
 			.disableHtmlEscaping()
@@ -13,7 +13,7 @@ final class Json {
 	private Json() {
 	}
 
-	static Gson gson() {
+	public static Gson gson() {
 		return GSON;
 	}
 }
