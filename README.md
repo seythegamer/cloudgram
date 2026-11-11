@@ -19,10 +19,17 @@ Back up your singleplayer Minecraft worlds to **your own Telegram bot chat**.
 ```powershell
 $env:JAVA_HOME = '<path-to-jdk-25>'
 .\gradlew.bat build        # compile + produce build/libs/cloudgram-<version>.jar
+.\gradlew.bat test         # pure-Java core tests (no Minecraft needed)
 .\gradlew.bat runClient    # launch a dev client with the mod loaded
 ```
 
 The Gradle wrapper pins Gradle 9.8.2; no global Gradle install is needed.
+
+## Snapshot format
+
+The pack, manifest and splitting rules are defined in [`docs/SPEC.md`](docs/SPEC.md). That file is
+the contract between the snapshot engine, the upload queue and the restore path; the
+`dev.cloudgram.core` package is the implementation and is covered by unit tests.
 
 ## How it is meant to work
 
