@@ -219,7 +219,64 @@ never contains the bot token or the encryption key:
 the manifest is already in the chat. `encryption` and `keyFingerprint` are absent in records written
 before encryption existed; those snapshots are plaintext and must be handled as such by restore.
 
-## 7. What this format deliberately does not do
+## 7. Pinned catalog
+
+The Bot API has no history endpoint, so a fresh device cannot list the files in a chat. Cloudgram
+publishes one **pinned catalog document** per chat; `getChat` returns it as `pinned_message`, and it
+is the only discovery channel:
+
+```json
+{
+  "format": "cloudgram/catalog/1",
+  "updatedAt": 1762900000000,
+  "snapshots": [
+    {
+      "manifest": { "format": "cloudgram/snapshot/1", "…": "the full manifest" },
+      "restoreCode": "CG1-42",
+      "manifestMessageId": 42,
+      "manifestFileId": "BQAC…",
+      "encryption": "aes-256-gcm/v1",
+      "keyFingerprint": "9c1f00a7b3d24e88",
+      "packs": [
+        { "id": "cell:0:0", "parts": [ { "index": 0, "messageId": 40, "fileId": "BQAC…" } ] }
+      ]
+    }
+  ]
+}
+```
+
+- The document is encrypted like every other object, with AAD `catalog | <chatId>`, and uploaded as
+  `cloudgram_catalog.json`.
+- After each successful snapshot upload the mod fetches the current catalog, adds or replaces the
+  entry for that world and snapshot, uploads the new document, pins it, and deletes the superseded
+  catalog message.
+- Publishing is best-effort: a snapshot is complete once its manifest is in the chat, so a failed
+  catalog update never invalidates a backup; the next upload repairs it.
+- A pinned text message (the setup greeting) or a pinned document with another name means "no
+  catalog yet"; Cloudgram never overwrites an unrelated pin.
+- `manifest` is embedded so a restore knows every pack hash before downloading anything. The
+  manifest document itself remains in the chat for audit and is not needed by the catalog path.
+- `encryption` is absent for entries created from pre-encryption uploads; their parts are plaintext.
+
+## 8. Restore
+
+Restore never overwrites an existing world:
+
+1. Fetch the pinned catalog and decrypt it with the installation's recovery key.
+2. Build the world in a temporary directory below `saves/` (`.cloudgram-restore-*`).
+3. For each pack, download every part (`getFile` + `/file/bot…`), decrypt when the catalog entry is
+   encrypted, verify the part SHA-256 and size, concatenate, verify the pack SHA-256 and size, then
+   extract into the temporary world directory. Pack entry names are untrusted: absolute paths,
+   `..` and duplicate entries are rejected.
+4. Verify that the total file count equals `manifest.stats.files`, and that
+   `.cloudgram/world.json` carries the catalog's world id (write it if an old snapshot predates it).
+5. Move the temporary world to a unique name (`Survival`, `Survival (Cloudgram 2)`, …) and delete
+   the temporary directory on any failure.
+
+Downloads retry rate limits, network errors and 5xx with backoff. The 20 MB `getFile` limit is why
+parts are capped at 19 MiB.
+
+## 9. What this format deliberately does not do
 
 - **No merge.** Snapshots are immutable; restoring is an explicit user choice.
 - **No outer compression.** See §4.3.

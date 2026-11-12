@@ -36,4 +36,29 @@ public interface TelegramTransport {
 
 	/** Pins a message in a chat without producing a notification. */
 	void pinChatMessage(String token, long chatId, long messageId) throws TelegramException;
+
+	/**
+	 * {@code getChat}: used to read the pinned catalog in private chats.
+	 *
+	 * <p>The Bot API has no history endpoint, but {@code getChat} returns {@code pinned_message},
+	 * which is how a fresh device discovers snapshots that were uploaded before it existed.
+	 */
+	default ChatInfo getChat(String token, long chatId) throws TelegramException {
+		throw new UnsupportedOperationException("getChat is not supported by this transport");
+	}
+
+	/** {@code getFile}: resolves a document file id to a download path. */
+	default RemoteFile getFile(String token, String fileId) throws TelegramException {
+		throw new UnsupportedOperationException("getFile is not supported by this transport");
+	}
+
+	/** Downloads the bytes behind a {@code getFile} path. */
+	default byte[] downloadFile(String token, String filePath) throws TelegramException {
+		throw new UnsupportedOperationException("downloadFile is not supported by this transport");
+	}
+
+	/** {@code deleteMessage}: removes a superseded catalog message. */
+	default void deleteMessage(String token, long chatId, long messageId) throws TelegramException {
+		throw new UnsupportedOperationException("deleteMessage is not supported by this transport");
+	}
 }

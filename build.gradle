@@ -42,6 +42,19 @@ test {
 
 def modVersion = project.version
 
+/**
+ * Forwards development self-test switches to the forked client, e.g.
+ * {@code gradlew runClient -Pcloudgram.selftest.openRestore=true}.
+ */
+tasks.matching { it.name == 'runClient' }.configureEach {
+	['openSetup', 'openRestore', 'leaveAfterTicks'].each { hook ->
+		def property = "cloudgram.selftest.${hook}"
+		if (project.hasProperty(property)) {
+			systemProperty property, project.property(property)
+		}
+	}
+}
+
 processResources {
 	inputs.property "version", modVersion
 

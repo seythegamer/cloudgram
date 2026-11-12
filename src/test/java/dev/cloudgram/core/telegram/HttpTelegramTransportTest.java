@@ -18,8 +18,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -35,7 +38,10 @@ class HttpTelegramTransportTest {
 	private HttpServer server;
 	private HttpTelegramTransport transport;
 	private final List<Recorded> requests = Collections.synchronizedList(new ArrayList<>());
+	private final List<String> fileRequests = Collections.synchronizedList(new ArrayList<>());
 	private volatile Response response;
+	private volatile byte[] fileContent;
+	private volatile int fileStatus = 200;
 
 	@BeforeEach
 	void startServer() throws IOException {
@@ -53,6 +59,20 @@ class HttpTelegramTransportTest {
 			exchange.getResponseHeaders().add("Content-Type", "application/json");
 			exchange.sendResponseHeaders(current.status(), payload.length);
 			exchange.getResponseBody().write(payload);
+			exchange.close();
+		});
+		server.createContext("/file", exchange -> {
+			String path = exchange.getRequestURI().getPath();
+			String query = exchange.getRequestURI().getRawQuery();
+			fileRequests.add(path + (query == null ? "" : "?" + query));
+
+			int status = fileStatus;
+			byte[] payload = fileContent == null ? new byte[0] : fileContent;
+			exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+			exchange.sendResponseHeaders(status, payload.length == 0 ? -1 : payload.length);
+			if (payload.length > 0) {
+				exchange.getResponseBody().write(payload);
+			}
 			exchange.close();
 		});
 		server.start();
@@ -259,11 +279,108 @@ class HttpTelegramTransportTest {
 	}
 
 	@Test
+	void deleteMessagePostsTheMessageId() throws TelegramException {
+		response = new Response(200, "{\"ok\":true,\"result\":true}");
+
+		transport.deleteMessage(TOKEN, 42L, 21L);
+
+		Recorded request = requests.getFirst();
+		assertEquals("deleteMessage", request.method());
+		assertEquals("POST", request.httpMethod());
+		Map<String, String> form = decodeForm(request.body());
+		assertEquals("42", form.get("chat_id"));
+		assertEquals("21", form.get("message_id"));
+	}
+
+	@Test
+	void getChatParsesAPinnedCatalogDocument() throws TelegramException {
+		response = new Response(200, """
+				{"ok":true,"result":{"id":42,"type":"private","first_name":"sey",
+				  "pinned_message":{"message_id":21,"date":1800000000,
+				    "chat":{"id":42,"type":"private"},
+				    "document":{"file_id":"CATALOG","file_unique_id":"UNIQUE",
+				      "file_name":"cloudgram_catalog.json","file_size":812}}}}
+				""");
+
+		ChatInfo chat = transport.getChat(TOKEN, 42L);
+
+		assertEquals(42L, chat.id());
+		assertEquals("private", chat.type());
+		assertEquals("sey", chat.title());
+		assertNotNull(chat.pinnedMessage());
+		assertEquals(21L, chat.pinnedMessage().messageId());
+		assertEquals("CATALOG", chat.pinnedMessage().document().fileId());
+		assertEquals("cloudgram_catalog.json", chat.pinnedMessage().document().fileName());
+		assertEquals(812, chat.pinnedMessage().document().fileSize());
+
+		Map<String, String> query = decodeForm(requests.getFirst().query());
+		assertEquals("42", query.get("chat_id"));
+	}
+
+	@Test
+	void getChatHandlesPinnedTextAndNoPin() throws TelegramException {
+		response = new Response(200, """
+				{"ok":true,"result":{"id":42,"type":"private","first_name":"sey",
+				  "pinned_message":{"message_id":5,"date":1800000000,
+				    "chat":{"id":42,"type":"private"},"text":"Cloudgram is connected"}}}
+				""");
+
+		ChatInfo text = transport.getChat(TOKEN, 42L);
+
+		assertEquals("Cloudgram is connected", text.pinnedMessage().text());
+		assertNull(text.pinnedMessage().document());
+
+		response = new Response(200, "{\"ok\":true,\"result\":{\"id\":42,\"type\":\"private\"}}");
+
+		assertNull(transport.getChat(TOKEN, 42L).pinnedMessage());
+	}
+
+	@Test
+	void getFileResolvesTheDownloadPath() throws TelegramException {
+		response = new Response(200, """
+				{"ok":true,"result":{"file_id":"CATALOG","file_unique_id":"UNIQUE",
+				  "file_size":812,"file_path":"documents/file_7.json"}}
+				""");
+
+		RemoteFile file = transport.getFile(TOKEN, "CATALOG");
+
+		assertEquals("CATALOG", file.fileId());
+		assertEquals("documents/file_7.json", file.filePath());
+		assertEquals(812, file.fileSize());
+
+		Map<String, String> query = decodeForm(requests.getFirst().query());
+		assertEquals("CATALOG", query.get("file_id"));
+	}
+
+	@Test
+	void downloadFileFetchesThePathWithTheToken() throws TelegramException {
+		fileContent = "catalog-bytes".getBytes(StandardCharsets.UTF_8);
+
+		byte[] bytes = transport.downloadFile(TOKEN, "documents/file_7.json");
+
+		assertArrayEquals(fileContent, bytes);
+		assertEquals(List.of("/file/bot" + TOKEN + "/documents/file_7.json"), fileRequests);
+	}
+
+	@Test
+	void aFailedDownloadCarriesTheHttpStatus() {
+		fileStatus = 404;
+
+		TelegramException error = assertThrows(TelegramException.class,
+				() -> transport.downloadFile(TOKEN, "documents/missing.json"));
+
+		assertEquals(404, error.code());
+		assertTrue(error.getMessage().contains("404"));
+	}
+
+	@Test
 	void rejectsInvalidArgumentsBeforeSending() {
 		assertThrows(IllegalArgumentException.class, () -> transport.getUpdates(TOKEN, -2, 0));
 		assertThrows(IllegalArgumentException.class, () -> transport.getUpdates(TOKEN, 0, -1));
 		assertThrows(IllegalArgumentException.class, () -> transport.sendMessage(TOKEN, 42L, " "));
 		assertThrows(IllegalArgumentException.class, () -> transport.getMe(" "));
+		assertThrows(IllegalArgumentException.class, () -> transport.getFile(TOKEN, " "));
+		assertThrows(IllegalArgumentException.class, () -> transport.downloadFile(TOKEN, " "));
 	}
 
 	private static Map<String, String> decodeForm(String encoded) {

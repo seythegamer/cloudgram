@@ -24,6 +24,7 @@ public record WorldIdentity(String format, String id, long createdAt, String ori
 	public static final String IDENTITY_PATH = ".cloudgram/world.json";
 
 	public static final String ORIGIN_LOCAL = "local";
+	public static final String ORIGIN_RESTORED = "restored";
 
 	public static WorldIdentity create(Instant createdAt) {
 		return new WorldIdentity(CURRENT_FORMAT, UUID.randomUUID().toString(), createdAt.getEpochSecond(), ORIGIN_LOCAL);

@@ -42,6 +42,31 @@ with it, so the Telegram copies cannot be read without it.
 The key is stored in `config/cloudgram.json` and is never displayed in the wizard. Keep the file
 private; losing the key means losing access to the encrypted Telegram copies.
 
+## 5. Restore a backup
+
+Every successful upload updates a **pinned catalog** in the chat. Any device with the bot token and
+the recovery key can read it:
+
+1. Title screen → **Cloudgram** → **Restore from Telegram...**.
+2. Pick a snapshot from the list. The screen shows the world name, the time, the file count and the
+   `CG1-…` restore code.
+3. Click **Restore**. The download is decrypted and verified part by part, then the world appears in
+   the world list under a free name.
+
+Cloudgram never overwrites an existing save. If a restore fails (wrong key, interrupted download,
+changed bytes), the `saves` directory is left untouched and the temporary directory is removed.
+
+### On a new PC
+
+Install the mod, connect a bot (steps 1–3), then replace the freshly generated key with the one from
+your other PC:
+
+1. Open **Cloudgram** → **Restore from Telegram...**.
+2. Click **Change key...**, paste the recovery key and click **Save key**.
+3. The snapshot list appears. Restore as usual.
+
+The same bot can be used on several PCs; each keeps its own `config/cloudgram.json`.
+
 ## Troubleshooting
 
 | Message | Meaning |
@@ -51,6 +76,9 @@ private; losing the key means losing access to the encrypted Telegram copies.
 | `No Start message yet` | Press **Start** in the bot chat first, then click **I pressed Start** again. |
 | `Telegram is rate limiting requests` | Wait the shown number of seconds and retry. |
 | `Cannot reach Telegram` | No internet, a proxy, or `api.telegram.org` is blocked. |
+| `The catalog cannot be decrypted with this key` | This PC holds a different recovery key. Use **Change key...** and paste the key from the PC that made the backups. |
+| `... failed its SHA-256 check` | The uploaded bytes do not match the manifest (a damaged upload). Try another snapshot; the local vault copy is unaffected. |
+| `No snapshots yet` | The chat has no Cloudgram catalog. Leave a world on any device with the same bot first. |
 
 ## Where the token and key are stored
 
@@ -68,6 +96,8 @@ the wizard. Rotating the bot token does not change the backup key.
 
 ## What the bot can see
 
-The mod only reads `getUpdates` to find the `/start` message during setup. It does not read or
-store other messages, and it has no commands. In the other direction it sends backup uploads and
-status messages to the bound chat.
+The mod only calls `getUpdates` to find the `/start` message during setup. It uses `getChat` to read
+the pinned catalog, `getFile` and the file endpoint to download snapshot parts, and
+`pinChatMessage`/`deleteMessage` to keep exactly one catalog pinned. It does not read or store other
+messages, and it has no commands. In the other direction it sends backup uploads and status messages
+to the bound chat.

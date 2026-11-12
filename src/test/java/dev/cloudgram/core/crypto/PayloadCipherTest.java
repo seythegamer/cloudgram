@@ -141,8 +141,11 @@ class PayloadCipherTest {
 		assertFalse(java.util.Arrays.equals(part, otherPart));
 		assertFalse(java.util.Arrays.equals(part, manifest));
 		assertFalse(java.util.Arrays.equals(manifest, Aad.manifest("world", "other-snapshot")));
+		assertFalse(java.util.Arrays.equals(Aad.catalog(1L), Aad.catalog(2L)));
+		assertFalse(java.util.Arrays.equals(Aad.catalog(1L), manifest));
 		assertThrows(IllegalArgumentException.class, () -> Aad.part(" ", "snapshot", "pack", 0));
 		assertThrows(IllegalArgumentException.class, () -> Aad.part("world", "snapshot", "pack", -1));
 		assertThrows(IllegalArgumentException.class, () -> Aad.manifest("world", " "));
+		assertThrows(IllegalArgumentException.class, () -> Aad.catalog(0));
 	}
 }

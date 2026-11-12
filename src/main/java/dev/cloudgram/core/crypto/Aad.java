@@ -31,6 +31,14 @@ public final class Aad {
 		return text(PREFIX + "|" + PayloadCipher.SCHEME + "|manifest|" + worldId + "|" + snapshotId);
 	}
 
+	/** The pinned catalog is mutable and bound to exactly one chat. */
+	public static byte[] catalog(long chatId) {
+		if (chatId <= 0) {
+			throw new IllegalArgumentException("chatId must be positive");
+		}
+		return text(PREFIX + "|" + PayloadCipher.SCHEME + "|catalog|" + chatId);
+	}
+
 	private static byte[] text(String value) {
 		return value.getBytes(StandardCharsets.UTF_8);
 	}

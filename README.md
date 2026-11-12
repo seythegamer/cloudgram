@@ -7,10 +7,11 @@ Back up your singleplayer Minecraft worlds to **your own Telegram bot chat**.
   machine and is never derived from the bot token.
 - Telegram is treated as a transport, not as the only copy: the local save always stays on disk.
 
-> Status: setup, local snapshots, encrypted upload and recovery-key export work. Leaving a world
-> force-saves and packs it, then uploads every encrypted part, the encrypted manifest, and a summary
-> with a `CG1-…` restore code. Restore is the next milestone. Backups made *before* encryption
-> existed are plaintext; the restore path will detect both formats.
+> Status: setup, local snapshots, encrypted upload, recovery-key export and restore work. Leaving a
+> world force-saves and packs it, then uploads every encrypted part, the encrypted manifest, and a
+> summary with a `CG1-…` restore code. The pinned catalog lets any device with the same recovery key
+> list and restore those snapshots as new saves. Backups made *before* encryption existed are
+> plaintext; restore detects both formats.
 
 ## Requirements
 
@@ -33,8 +34,7 @@ For an automated end-to-end check, the client has a development-only hook that l
 the same way the pause menu does:
 
 ```powershell
-$env:JAVA_TOOL_OPTIONS = '-Dcloudgram.selftest.leaveAfterTicks=120'
-.\gradlew.bat runClient --args="--quickPlaySingleplayer <levelId>"
+.\gradlew.bat runClient '-Pcloudgram.selftest.leaveAfterTicks=120' --args="--quickPlaySingleplayer <levelId>"
 ```
 
 The hook is inert outside `fabric.development=true` and does nothing unless that property is set.
@@ -43,11 +43,12 @@ The resulting snapshot lands in `run/cloudgram/vault/<worldId[0..8]>/<snapshotId
 > If `run/config/cloudgram.json` is bound to a real bot chat, a development snapshot is uploaded
 > there. Delete or rename that file, or uncheck backups, if you only want local packing.
 
-The wizard can be opened directly (the normal way is the **Cloudgram** button on the title screen):
+The wizard or the restore list can be opened directly (the normal way is the **Cloudgram** button on
+the title screen):
 
 ```powershell
-$env:JAVA_TOOL_OPTIONS = '-Dcloudgram.selftest.openSetup=true'
-.\gradlew.bat runClient
+.\gradlew.bat runClient '-Pcloudgram.selftest.openSetup=true'
+.\gradlew.bat runClient '-Pcloudgram.selftest.openRestore=true'
 ```
 
 ## Connecting your bot
@@ -89,19 +90,38 @@ first launch, stored in `config/cloudgram.json`, and independent of the bot toke
 plaintext fallback: if the key cannot be read, the upload is skipped and the local copy remains.
 
 Each uploaded snapshot also gets an `upload.json` next to its manifest, recording Telegram's
-message ids, file ids, the restore code, the encryption scheme and a short key fingerprint. That
-file is what the future restore path will use; it is never uploaded and never contains the bot
-token or the encryption key.
+message ids, file ids, the restore code, the encryption scheme and a short key fingerprint. It is
+never uploaded and never contains the bot token or the encryption key.
+
+## Catalog and restore
+
+The Bot API has no history endpoint, so the mod keeps one **pinned catalog** document in the chat.
+After every successful upload it fetches the catalog, adds or replaces the snapshot entry (with the
+full manifest and every part's `file_id`), uploads a new encrypted `cloudgram_catalog.json`, pins
+it, and deletes the superseded catalog message. A failed catalog update never invalidates the
+snapshot; the next upload repairs it.
+
+On any device:
+
+1. Title screen → **Cloudgram** → **Restore from Telegram...**.
+2. The screen reads the pinned catalog and lists your snapshots (`CG1-…` restore codes included).
+3. **Restore** downloads every part, decrypts and verifies it, checks the pack hashes and the file
+   count, then moves the result to a free save name (`Survival (Cloudgram 2)`).
+4. Nothing is ever overwritten: a failed restore leaves `saves/` untouched and deletes its temporary
+   directory.
+
+A new PC needs the recovery key from the PC that created the backups. Open **Restore from
+Telegram...** and use **Change key...** to paste it; uploads from the new PC then use the same key.
 
 ## How it is meant to work
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and paste the token into the mod. ✅
 2. Press **Start** in the bot chat; the mod binds to that chat automatically. ✅
 3. Quit a world → the world is force-saved, packed, encrypted and uploaded. ✅
-4. On another PC, the pinned catalog lists your snapshots; restore as a copy, never silently over an existing world. ⏳
+4. On another PC, the pinned catalog lists your snapshots; restore as a copy, never silently over an existing world. ✅
 
 Currently implemented: setup, force-save, packing, encrypted upload with retries, recovery-key
-export, and the local upload record. Restore/import is the next milestone.
+export, the pinned catalog and restore-as-copy for both encrypted and legacy plaintext snapshots.
 
 ## Security notes
 

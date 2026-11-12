@@ -31,6 +31,7 @@ public final class HttpTelegramTransport implements TelegramTransport {
 	private static final URI DEFAULT_BASE = URI.create("https://api.telegram.org");
 	private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
 	private static final long MAX_DOCUMENT_BYTES = 50L * 1024 * 1024;
+	private static final long MAX_DOWNLOAD_BYTES = 25L * 1024 * 1024;
 
 	private final URI base;
 	private final Duration timeout;
@@ -149,6 +150,96 @@ public final class HttpTelegramTransport implements TelegramTransport {
 				"chat_id", Long.toString(chatId),
 				"message_id", Long.toString(messageId),
 				"disable_notification", "true"), true);
+	}
+
+	@Override
+	public ChatInfo getChat(String token, long chatId) throws TelegramException {
+		JsonObject result = callObject(token, "getChat", Map.of("chat_id", Long.toString(chatId)), false);
+
+		PinnedMessage pinned = null;
+		if (result.has("pinned_message") && result.get("pinned_message").isJsonObject()) {
+			JsonObject message = result.getAsJsonObject("pinned_message");
+			RemoteDocument document = null;
+			if (message.has("document") && message.get("document").isJsonObject()) {
+				document = parseDocument(message.getAsJsonObject("document"));
+			}
+			String text = optionalString(message, "text");
+			if (text == null) {
+				text = optionalString(message, "caption");
+			}
+			pinned = new PinnedMessage(requiredLong(message, "message_id"), text, document);
+		}
+
+		String title = optionalString(result, "title");
+		if (title == null) {
+			title = optionalString(result, "username");
+		}
+		if (title == null) {
+			title = joinName(optionalString(result, "first_name"), optionalString(result, "last_name"));
+		}
+		return new ChatInfo(requiredLong(result, "id"), optionalString(result, "type"), title, pinned);
+	}
+
+	@Override
+	public RemoteFile getFile(String token, String fileId) throws TelegramException {
+		if (fileId == null || fileId.isBlank()) {
+			throw new IllegalArgumentException("fileId is required");
+		}
+		JsonObject result = callObject(token, "getFile", Map.of("file_id", fileId), false);
+		return new RemoteFile(
+				requiredString(result, "file_id"),
+				requiredString(result, "file_path"),
+				result.has("file_size") ? result.get("file_size").getAsLong() : 0L);
+	}
+
+	@Override
+	public byte[] downloadFile(String token, String filePath) throws TelegramException {
+		requireToken(token);
+		if (filePath == null || filePath.isBlank()) {
+			throw new IllegalArgumentException("filePath is required");
+		}
+		URI uri = base.resolve("/file/bot" + token.trim() + "/" + filePath);
+		HttpRequest request = HttpRequest.newBuilder(uri)
+				.timeout(timeout.multipliedBy(2))
+				.header("User-Agent", "Cloudgram/0.1")
+				.GET()
+				.build();
+
+		HttpResponse<byte[]> response;
+		try {
+			response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new TelegramException("Telegram download was interrupted", e);
+		} catch (IOException e) {
+			throw new TelegramException("Cannot download from Telegram: " + e.getMessage(), e);
+		}
+		if (response.statusCode() != 200) {
+			throw new TelegramException(
+					response.statusCode(), "Telegram returned HTTP " + response.statusCode() + " for a file", 0);
+		}
+		byte[] body = response.body();
+		if (body == null || body.length == 0) {
+			throw new TelegramException("Telegram returned an empty file");
+		}
+		if (body.length > MAX_DOWNLOAD_BYTES) {
+			throw new TelegramException("Telegram file is larger than the 25 MiB safety limit");
+		}
+		return body;
+	}
+
+	@Override
+	public void deleteMessage(String token, long chatId, long messageId) throws TelegramException {
+		call(token, "deleteMessage", Map.of(
+				"chat_id", Long.toString(chatId),
+				"message_id", Long.toString(messageId)), true);
+	}
+
+	private static RemoteDocument parseDocument(JsonObject document) throws TelegramException {
+		return new RemoteDocument(
+				requiredString(document, "file_id"),
+				optionalString(document, "file_name"),
+				document.has("file_size") ? document.get("file_size").getAsLong() : 0L);
 	}
 
 	private JsonObject callObject(String token, String method, Map<String, String> params, boolean post)

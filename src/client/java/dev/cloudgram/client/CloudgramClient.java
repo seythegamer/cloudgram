@@ -1,6 +1,7 @@
 package dev.cloudgram.client;
 
 import dev.cloudgram.Cloudgram;
+import dev.cloudgram.client.restore.CloudgramRestoreScreen;
 import dev.cloudgram.client.setup.CloudgramSetupScreen;
 import dev.cloudgram.core.config.ConfigStore;
 import net.fabricmc.api.ClientModInitializer;
@@ -18,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public final class CloudgramClient implements ClientModInitializer {
 	private static final AtomicBoolean DEV_SETUP_OPENED = new AtomicBoolean();
+	private static final AtomicBoolean DEV_RESTORE_OPENED = new AtomicBoolean();
 
 	@Override
 	public void onInitializeClient() {
@@ -41,8 +43,38 @@ public final class CloudgramClient implements ClientModInitializer {
 					.build();
 			Screens.getWidgets(screen).add(button);
 
-			maybeOpenSetupForSelfTest(client, titleScreen, configStore);
+			if (!maybeOpenRestoreForSelfTest(client, titleScreen, configStore)) {
+				maybeOpenSetupForSelfTest(client, titleScreen, configStore);
+			}
 		});
+	}
+
+	/**
+	 * Development-only hook that opens the restore list on the title screen.
+	 *
+	 * <p>Inert outside {@code fabric.development=true} and only active with
+	 * {@code -Dcloudgram.selftest.openRestore=true}.
+	 */
+	private static boolean maybeOpenRestoreForSelfTest(
+			Minecraft client, TitleScreen screen, ConfigStore configStore) {
+		if (!FabricLoader.getInstance().isDevelopmentEnvironment()) {
+			return false;
+		}
+		String raw = System.getProperty("cloudgram.selftest.openRestore");
+		if (raw == null || !Boolean.parseBoolean(raw.trim())) {
+			return false;
+		}
+		if (!DEV_RESTORE_OPENED.compareAndSet(false, true)) {
+			return true;
+		}
+
+		Cloudgram.LOG.info("Cloudgram self-test: opening the restore screen");
+		client.execute(() -> {
+			if (client.gui.screen() == screen) {
+				client.gui.setScreen(new CloudgramRestoreScreen(screen, configStore));
+			}
+		});
+		return true;
 	}
 
 	/**

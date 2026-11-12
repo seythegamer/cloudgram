@@ -5,6 +5,7 @@ import dev.cloudgram.core.SnapshotRequest;
 import dev.cloudgram.core.SnapshotResult;
 import dev.cloudgram.core.SnapshotService;
 import dev.cloudgram.core.WorldIdentity;
+import dev.cloudgram.core.catalog.CatalogService;
 import dev.cloudgram.core.config.CloudgramConfig;
 import dev.cloudgram.core.config.ConfigStore;
 import dev.cloudgram.core.crypto.EncryptionKey;
@@ -176,6 +177,18 @@ public final class Cloudgram implements ModInitializer {
 					record.restoreCode());
 			if (record.warning() != null) {
 				LOG.warn("Cloudgram: {}", record.warning());
+			}
+
+			try {
+				CatalogService catalog = new CatalogService(
+						new HttpTelegramTransport(), new PayloadCipher(key));
+				CatalogService.Fetched fetched = catalog.publishSnapshot(
+						config.botToken(), config.chatId(), snapshot.manifest(), record);
+				LOG.info("Cloudgram pinned catalog now lists {} snapshots",
+						fetched.catalog().snapshots().size());
+			} catch (Exception e) {
+				// The snapshot is complete; a missing catalog only affects discovery on other devices.
+				LOG.warn("Cloudgram uploaded the snapshot but could not update the pinned catalog", e);
 			}
 		} catch (UploadException e) {
 			LOG.warn(

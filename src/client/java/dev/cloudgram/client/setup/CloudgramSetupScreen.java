@@ -2,6 +2,7 @@ package dev.cloudgram.client.setup;
 
 import com.mojang.blaze3d.Blaze3D;
 import dev.cloudgram.Cloudgram;
+import dev.cloudgram.client.restore.CloudgramRestoreScreen;
 import dev.cloudgram.core.config.CloudgramConfig;
 import dev.cloudgram.core.config.ConfigStore;
 import dev.cloudgram.core.crypto.EncryptionKey;
@@ -176,8 +177,15 @@ public final class CloudgramSetupScreen extends Screen {
 				addRenderableWidget(replace);
 			}
 
-			Button copyKey = Button.builder(Component.literal("Copy recovery key"), button -> copyRecoveryKey())
+			Button restore = Button.builder(Component.literal("Restore from Telegram..."),
+							button -> openRestore())
 					.bounds(left, actionsY + 24, CONTENT_WIDTH, BUTTON_HEIGHT)
+					.build();
+			restore.active = !busy;
+			addRenderableWidget(restore);
+
+			Button copyKey = Button.builder(Component.literal("Copy recovery key"), button -> copyRecoveryKey())
+					.bounds(left, actionsY + 48, CONTENT_WIDTH, BUTTON_HEIGHT)
 					.build();
 			addRenderableWidget(copyKey);
 			return;
@@ -229,7 +237,7 @@ public final class CloudgramSetupScreen extends Screen {
 
 		if (binding != null) {
 			graphics.text(font, Component.literal("Recovery key: copy it for other PCs"),
-					left, actionsY + 8, COLOR_WARN);
+					left, actionsY + 70, COLOR_WARN);
 		}
 	}
 
@@ -402,6 +410,13 @@ public final class CloudgramSetupScreen extends Screen {
 		}
 		setStatus("Paste the token of the bot you want to use.", COLOR_BODY);
 		refresh();
+	}
+
+	private void openRestore() {
+		if (minecraft == null || minecraft.gui == null || busy) {
+			return;
+		}
+		minecraft.gui.setScreen(new CloudgramRestoreScreen(this, configStore));
 	}
 
 	private void copyRecoveryKey() {
