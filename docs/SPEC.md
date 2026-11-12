@@ -144,7 +144,7 @@ not exist):
 
 ### Local staging (before upload)
 
-Until the upload queue exists, snapshots are written to a local vault:
+Snapshots are written to a local vault before upload:
 
 ```
 <gameDir>/cloudgram/vault/<worldId[0..8]>/<snapshotId>/
@@ -154,6 +154,51 @@ Until the upload queue exists, snapshots are written to a local vault:
 
 The manifest is written last; a directory without one is an incomplete run and is deleted by the
 producer. `safePackId` follows the rule in §5.
+
+### Upload order
+
+The upload queue sends, in this order:
+
+1. every part of every pack, sorted by pack id and then part index;
+2. the manifest, renamed
+   `cg1_<worldId[0..8]>_<snapshotId>_manifest.json` (parts keep the §5 name);
+3. a summary text message containing `CG1-<manifest message id>`.
+
+The manifest is the existence marker: an interrupted upload leaves only orphan parts, which restore
+ignores. A retried request can produce a duplicate message; duplicates are harmless because a
+snapshot is immutable and identified by its manifest.
+
+Until the encryption milestone, uploaded packs and manifests are the plaintext bytes described
+above. Encryption will be a transport transform applied after these bytes (and their hashes) exist.
+
+### Local upload record
+
+`upload.json` is written next to the manifest after a successful upload. It is never uploaded and
+never contains the bot token:
+
+```json
+{
+  "format": "cloudgram/upload/1",
+  "worldId": "0f3c9a2e-7b1d-4f5a-9c3e-2a1b4c5d6e7f",
+  "snapshotId": "20261111T230000Z-a1b2c3",
+  "chatId": 123456789,
+  "manifest": { "messageId": 42, "fileId": "BQAC…", "fileName": "…_manifest.json", "fileSize": 8123 },
+  "packs": [
+    {
+      "id": "cell:0:0",
+      "sha256": "e3b0c442…",
+      "parts": [
+        { "messageId": 40, "fileId": "BQAC…", "fileName": "…_p000.bin", "fileSize": 8123456 }
+      ]
+    }
+  ],
+  "summaryMessageId": 43,
+  "restoreCode": "CG1-42"
+}
+```
+
+`summaryMessageId` is `0` when the summary could not be sent; the snapshot is still complete because
+the manifest is already in the chat.
 
 ## 7. What this format deliberately does not do
 

@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -18,16 +19,18 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
+import java.util.UUID;
 
 /**
  * Bot API client built on {@link HttpClient}.
  *
- * <p>Only form-encoded and JSON responses are used here; file uploads (multipart) belong to the
- * upload queue. No request or response is logged, because the URL contains the bot token.
+ * <p>Only form-encoded, multipart and JSON bodies are used here; no request or response is logged,
+ * because the URL contains the bot token.
  */
 public final class HttpTelegramTransport implements TelegramTransport {
 	private static final URI DEFAULT_BASE = URI.create("https://api.telegram.org");
 	private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
+	private static final long MAX_DOCUMENT_BYTES = 50L * 1024 * 1024;
 
 	private final URI base;
 	private final Duration timeout;
@@ -101,6 +104,46 @@ public final class HttpTelegramTransport implements TelegramTransport {
 	}
 
 	@Override
+	public UploadedDocument sendDocument(
+			String token, long chatId, String fileName, byte[] content, String caption)
+			throws TelegramException {
+		requireToken(token);
+		if (chatId <= 0) {
+			throw new IllegalArgumentException("chatId must be positive");
+		}
+		if (fileName == null || fileName.isBlank()) {
+			throw new IllegalArgumentException("fileName is required");
+		}
+		if (content == null || content.length == 0) {
+			throw new IllegalArgumentException("content is required");
+		}
+		if (content.length > MAX_DOCUMENT_BYTES) {
+			throw new IllegalArgumentException(
+					"document is too large for Telegram: " + content.length + " bytes");
+		}
+
+		String boundary = "----cloudgram" + UUID.randomUUID().toString().replace("-", "");
+		byte[] body = multipartBody(boundary, chatId, fileName, content, caption);
+		URI uri = base.resolve("/bot" + token.trim() + "/sendDocument");
+		HttpRequest request = HttpRequest.newBuilder(uri)
+				.timeout(timeout)
+				.header("User-Agent", "Cloudgram/0.1")
+				.header("Content-Type", "multipart/form-data; boundary=" + boundary)
+				.POST(HttpRequest.BodyPublishers.ofByteArray(body))
+				.build();
+
+		JsonObject result = asObject(send(request), "sendDocument");
+		JsonObject document = asObject(result.get("document"), "sendDocument.document");
+		return new UploadedDocument(
+				requiredLong(result, "message_id"),
+				requiredString(document, "file_id"),
+				optionalString(document, "file_name") == null
+						? fileName
+						: optionalString(document, "file_name"),
+				document.has("file_size") ? document.get("file_size").getAsLong() : content.length);
+	}
+
+	@Override
 	public void pinChatMessage(String token, long chatId, long messageId) throws TelegramException {
 		call(token, "pinChatMessage", Map.of(
 				"chat_id", Long.toString(chatId),
@@ -110,11 +153,14 @@ public final class HttpTelegramTransport implements TelegramTransport {
 
 	private JsonObject callObject(String token, String method, Map<String, String> params, boolean post)
 			throws TelegramException {
-		JsonElement result = call(token, method, params, post);
-		if (result == null || !result.isJsonObject()) {
-			throw new TelegramException("Telegram returned an unexpected result for " + method);
+		return asObject(call(token, method, params, post), method);
+	}
+
+	private static JsonObject asObject(JsonElement element, String what) throws TelegramException {
+		if (element == null || !element.isJsonObject()) {
+			throw new TelegramException("Telegram returned an unexpected result for " + what);
 		}
-		return result.getAsJsonObject();
+		return element.getAsJsonObject();
 	}
 
 	/**
@@ -124,9 +170,7 @@ public final class HttpTelegramTransport implements TelegramTransport {
 	 */
 	private JsonElement call(String token, String method, Map<String, String> params, boolean post)
 			throws TelegramException {
-		if (token == null || token.isBlank()) {
-			throw new IllegalArgumentException("token is required");
-		}
+		requireToken(token);
 
 		URI uri = base.resolve("/bot" + token.trim() + "/" + method);
 		HttpRequest.Builder request = HttpRequest.newBuilder(uri)
@@ -144,9 +188,19 @@ public final class HttpTelegramTransport implements TelegramTransport {
 			}
 		}
 
+		return send(request.build());
+	}
+
+	private static void requireToken(String token) {
+		if (token == null || token.isBlank()) {
+			throw new IllegalArgumentException("token is required");
+		}
+	}
+
+	private JsonElement send(HttpRequest request) throws TelegramException {
 		HttpResponse<String> response;
 		try {
-			response = client.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+			response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			throw new TelegramException("Telegram request was interrupted", e);
@@ -177,6 +231,43 @@ public final class HttpTelegramTransport implements TelegramTransport {
 		}
 
 		return root.get("result");
+	}
+
+	private static byte[] multipartBody(
+			String boundary, long chatId, String fileName, byte[] content, String caption) throws TelegramException {
+		ByteArrayOutputStream out = new ByteArrayOutputStream(content.length + 1024);
+		try {
+			field(out, boundary, "chat_id", Long.toString(chatId));
+			field(out, boundary, "disable_notification", "true");
+			if (caption != null && !caption.isBlank()) {
+				field(out, boundary, "caption", caption);
+			}
+
+			writeAscii(out, "--" + boundary + "\r\n");
+			writeAscii(out, "Content-Disposition: form-data; name=\"document\"; filename=\""
+					+ escapeFilename(fileName) + "\"\r\n");
+			writeAscii(out, "Content-Type: application/octet-stream\r\n\r\n");
+			out.write(content, 0, content.length);
+			writeAscii(out, "\r\n--" + boundary + "--\r\n");
+		} catch (IOException e) {
+			throw new TelegramException("Could not build the upload body", e);
+		}
+		return out.toByteArray();
+	}
+
+	private static void field(ByteArrayOutputStream out, String boundary, String name, String value)
+			throws IOException {
+		writeAscii(out, "--" + boundary + "\r\n");
+		writeAscii(out, "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n");
+		writeAscii(out, value + "\r\n");
+	}
+
+	private static void writeAscii(ByteArrayOutputStream out, String value) throws IOException {
+		out.write(value.getBytes(StandardCharsets.UTF_8));
+	}
+
+	private static String escapeFilename(String fileName) {
+		return fileName.replace('"', '_').replace('\r', '_').replace('\n', '_');
 	}
 
 	private static IncomingMessage parseUpdate(JsonElement element) throws TelegramException {

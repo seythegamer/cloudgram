@@ -4,6 +4,7 @@ import dev.cloudgram.core.telegram.BotInfo;
 import dev.cloudgram.core.telegram.IncomingMessage;
 import dev.cloudgram.core.telegram.TelegramException;
 import dev.cloudgram.core.telegram.TelegramTransport;
+import dev.cloudgram.core.telegram.UploadedDocument;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -165,6 +166,12 @@ class TelegramSetupTest {
 			lastChatId = chatId;
 			sentText = text;
 			return sentMessageId;
+		}
+
+		@Override
+		public UploadedDocument sendDocument(
+				String token, long chatId, String fileName, byte[] content, String caption) {
+			throw new UnsupportedOperationException("setup tests do not upload documents");
 		}
 
 		@Override

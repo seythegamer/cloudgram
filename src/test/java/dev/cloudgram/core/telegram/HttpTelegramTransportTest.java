@@ -44,8 +44,9 @@ class HttpTelegramTransportTest {
 			String path = exchange.getRequestURI().getPath();
 			String method = path.substring(path.lastIndexOf('/') + 1);
 			String query = exchange.getRequestURI().getRawQuery();
+			String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
 			String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-			requests.add(new Recorded(path, method, exchange.getRequestMethod(), query, body));
+			requests.add(new Recorded(path, method, exchange.getRequestMethod(), contentType, query, body));
 
 			Response current = response;
 			byte[] payload = current.body().getBytes(StandardCharsets.UTF_8);
@@ -186,6 +187,69 @@ class HttpTelegramTransportTest {
 	}
 
 	@Test
+	void sendDocumentPostsMultipartFieldsAndFileBytes() throws TelegramException {
+		response = new Response(200, """
+				{"ok":true,"result":{"message_id":88,"document":{
+				  "file_id":"FILEID","file_unique_id":"UNIQUE",
+				  "file_name":"pack.bin","file_size":4}}}
+				""");
+		byte[] content = "ABCD".getBytes(StandardCharsets.UTF_8);
+
+		UploadedDocument uploaded = transport.sendDocument(
+				TOKEN, 42L, "pack.bin", content, "pack caption");
+
+		assertEquals(88, uploaded.messageId());
+		assertEquals("FILEID", uploaded.fileId());
+		assertEquals("pack.bin", uploaded.fileName());
+		assertEquals(4, uploaded.fileSize());
+
+		Recorded request = requests.getFirst();
+		assertEquals("sendDocument", request.method());
+		assertEquals("POST", request.httpMethod());
+		assertTrue(request.contentType().startsWith("multipart/form-data; boundary="));
+		String boundary = request.contentType().substring("multipart/form-data; boundary=".length());
+
+		String body = request.body();
+		assertTrue(body.startsWith("--" + boundary + "\r\n"));
+		assertTrue(body.endsWith("\r\n--" + boundary + "--\r\n"));
+		assertTrue(body.contains("name=\"chat_id\"\r\n\r\n42\r\n"));
+		assertTrue(body.contains("name=\"disable_notification\"\r\n\r\ntrue\r\n"));
+		assertTrue(body.contains("name=\"caption\"\r\n\r\npack caption\r\n"));
+		assertTrue(body.contains("name=\"document\"; filename=\"pack.bin\""));
+		assertTrue(body.contains("\r\n\r\nABCD\r\n"));
+	}
+
+	@Test
+	void sendDocumentFallsBackToTheLocalNameAndSize() throws TelegramException {
+		response = new Response(200, """
+				{"ok":true,"result":{"message_id":89,
+				  "document":{"file_id":"FILEID","file_unique_id":"UNIQUE"}}}
+				""");
+
+		UploadedDocument uploaded = transport.sendDocument(
+				TOKEN, 42L, "local.bin", "AB".getBytes(StandardCharsets.UTF_8), null);
+
+		assertEquals("local.bin", uploaded.fileName());
+		assertEquals(2, uploaded.fileSize());
+		assertFalse(requests.getFirst().body().contains("name=\"caption\""));
+	}
+
+	@Test
+	void sendDocumentRejectsBadInputAndMissingFileIds() {
+		assertThrows(IllegalArgumentException.class,
+				() -> transport.sendDocument(TOKEN, 42L, "x.bin", new byte[0], ""));
+		assertThrows(IllegalArgumentException.class,
+				() -> transport.sendDocument(" ", 42L, "x.bin", new byte[] {1}, ""));
+		assertThrows(IllegalArgumentException.class,
+				() -> transport.sendDocument(TOKEN, 0L, "x.bin", new byte[] {1}, ""));
+
+		response = new Response(200, "{\"ok\":true,\"result\":{\"message_id\":88}}");
+		TelegramException error = assertThrows(TelegramException.class,
+				() -> transport.sendDocument(TOKEN, 42L, "x.bin", new byte[] {1}, ""));
+		assertTrue(error.getMessage().contains("document"));
+	}
+
+	@Test
 	void unreadableResponseIsReportedWithTheHttpStatus() {
 		response = new Response(502, "<html>bad gateway</html>");
 
@@ -217,7 +281,8 @@ class HttpTelegramTransportTest {
 		return values;
 	}
 
-	private record Recorded(String path, String method, String httpMethod, String query, String body) {
+	private record Recorded(
+			String path, String method, String httpMethod, String contentType, String query, String body) {
 	}
 
 	private record Response(int status, String body) {

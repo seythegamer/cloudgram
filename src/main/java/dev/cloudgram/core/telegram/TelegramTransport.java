@@ -24,6 +24,16 @@ public interface TelegramTransport {
 	/** Sends a plain text message and returns its {@code message_id}. */
 	long sendMessage(String token, long chatId, String text) throws TelegramException;
 
+	/**
+	 * Uploads one in-memory document with {@code sendDocument}.
+	 *
+	 * <p>Cloudgram only sends packs that were already split into byte-range parts (at most 19 MiB)
+	 * and the small manifest, so a byte array keeps the transport independent of temporary files
+	 * and lets callers verify a part's hash before it leaves the machine.
+	 */
+	UploadedDocument sendDocument(String token, long chatId, String fileName, byte[] content, String caption)
+			throws TelegramException;
+
 	/** Pins a message in a chat without producing a notification. */
 	void pinChatMessage(String token, long chatId, long messageId) throws TelegramException;
 }

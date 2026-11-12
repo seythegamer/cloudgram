@@ -5,6 +5,12 @@ import dev.cloudgram.core.SnapshotRequest;
 import dev.cloudgram.core.SnapshotResult;
 import dev.cloudgram.core.SnapshotService;
 import dev.cloudgram.core.WorldIdentity;
+import dev.cloudgram.core.config.CloudgramConfig;
+import dev.cloudgram.core.config.ConfigStore;
+import dev.cloudgram.core.telegram.HttpTelegramTransport;
+import dev.cloudgram.core.upload.SnapshotUploader;
+import dev.cloudgram.core.upload.UploadException;
+import dev.cloudgram.core.upload.UploadRecord;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.loader.api.FabricLoader;
@@ -28,6 +34,7 @@ public final class Cloudgram implements ModInitializer {
 
 	private static final Set<Path> SNAPSHOTS_IN_FLIGHT = ConcurrentHashMap.newKeySet();
 	private static final AtomicReference<ExecutorService> SNAPSHOT_EXECUTOR = new AtomicReference<>();
+	private static final AtomicReference<ExecutorService> UPLOAD_EXECUTOR = new AtomicReference<>();
 
 	@Override
 	public void onInitialize() {
@@ -66,6 +73,9 @@ public final class Cloudgram implements ModInitializer {
 	 * after leaving a world. The thread is a daemon: quitting the game mid-pack abandons that run
 	 * (a persistent journal and resume come with the upload queue). Packing the same world twice at
 	 * once is refused because the folder may already be open for writing again.
+	 *
+	 * <p>Uploading uses a second single-thread executor: a slow network must not delay the snapshot
+	 * of the next world the user opens, while uploads still run one at a time.
 	 */
 	private static void requestSnapshot(Path worldDir, SnapshotRequest request) {
 		Path key = worldDir.toAbsolutePath().normalize();
@@ -76,22 +86,70 @@ public final class Cloudgram implements ModInitializer {
 
 		LOG.info("Cloudgram snapshot queued for '{}' at {}", request.worldName(), key);
 		snapshotExecutor().execute(() -> {
+			SnapshotResult result;
 			try {
 				SnapshotService service = new SnapshotService(vaultDir(), PackOptions.defaults());
-				SnapshotResult result = service.capture(key, request);
-				LOG.info(
-						"Cloudgram snapshot {} complete: {} packs, {} MiB, {} files -> {}",
-						result.manifest().snapshot().id(),
-						result.packs().size(),
-						String.format(Locale.ROOT, "%.1f", result.totalPackBytes() / 1048576.0),
-						result.manifest().stats().files(),
-						result.directory());
+				result = service.capture(key, request);
 			} catch (Exception e) {
 				LOG.error("Cloudgram snapshot for '{}' failed", request.worldName(), e);
+				return;
 			} finally {
 				SNAPSHOTS_IN_FLIGHT.remove(key);
 			}
+
+			LOG.info(
+					"Cloudgram snapshot {} complete: {} packs, {} MiB, {} files -> {}",
+					result.manifest().snapshot().id(),
+					result.packs().size(),
+					String.format(Locale.ROOT, "%.1f", result.totalPackBytes() / 1048576.0),
+					result.manifest().stats().files(),
+					result.directory());
+			uploadExecutor().execute(() -> uploadIfConfigured(result));
 		});
+	}
+
+	/** Uploads the finished snapshot when a bot chat is bound; never touches the local copy. */
+	private static void uploadIfConfigured(SnapshotResult snapshot) {
+		CloudgramConfig config;
+		try {
+			config = ConfigStore.inDirectory(FabricLoader.getInstance().getConfigDir()).load();
+		} catch (IOException e) {
+			LOG.warn("Cloudgram could not read its config; the snapshot stays local", e);
+			return;
+		}
+		if (!config.backupOnExit()) {
+			LOG.info("Cloudgram upload skipped: backups on exit are disabled");
+			return;
+		}
+		if (!config.hasBot() || !config.isBound()) {
+			LOG.info("Cloudgram upload skipped: no bot chat is bound yet");
+			return;
+		}
+
+		try {
+			UploadRecord record = new SnapshotUploader(new HttpTelegramTransport())
+					.upload(config.botToken(), config.chatId(), snapshot);
+			int parts = record.packs().stream().mapToInt(pack -> pack.parts().size()).sum();
+			LOG.info(
+					"Cloudgram uploaded snapshot {} ({} packs, {} parts, restore code {})",
+					snapshot.manifest().snapshot().id(),
+					record.packs().size(),
+					parts,
+					record.restoreCode());
+			if (record.warning() != null) {
+				LOG.warn("Cloudgram: {}", record.warning());
+			}
+		} catch (UploadException e) {
+			LOG.warn(
+					"Cloudgram upload of {} failed; the local vault copy is intact",
+					snapshot.manifest().snapshot().id(),
+					e);
+		} catch (RuntimeException e) {
+			LOG.error(
+					"Cloudgram upload of {} failed unexpectedly; the local vault copy is intact",
+					snapshot.manifest().snapshot().id(),
+					e);
+		}
 	}
 
 	private static ExecutorService snapshotExecutor() {
@@ -110,6 +168,24 @@ public final class Cloudgram implements ModInitializer {
 		}
 		created.shutdownNow();
 		return SNAPSHOT_EXECUTOR.get();
+	}
+
+	private static ExecutorService uploadExecutor() {
+		ExecutorService existing = UPLOAD_EXECUTOR.get();
+		if (existing != null) {
+			return existing;
+		}
+		ExecutorService created = Executors.newSingleThreadExecutor(runnable -> {
+			Thread thread = new Thread(runnable, "cloudgram-upload");
+			thread.setDaemon(true);
+			thread.setPriority(Thread.MIN_PRIORITY);
+			return thread;
+		});
+		if (UPLOAD_EXECUTOR.compareAndSet(null, created)) {
+			return created;
+		}
+		created.shutdownNow();
+		return UPLOAD_EXECUTOR.get();
 	}
 
 	private static Path vaultDir() {
