@@ -94,4 +94,37 @@ class CloudgramConfigTest {
 		assertEquals(42L, config.chatId());
 		assertEquals(TOKEN, config.botToken());
 	}
+
+	@Test
+	void encryptionKeySurvivesEveryUpdate() {
+		CloudgramConfig config = CloudgramConfig.empty()
+				.withEncryptionKey("recovery-key")
+				.withBot(TOKEN, "cloudgram_bot")
+				.withBinding(42L, "sey", 1_800_000_000L)
+				.withBackupOnExit(false);
+
+		assertTrue(config.hasEncryptionKey());
+		assertEquals("recovery-key", config.encryptionKey());
+		assertEquals("recovery-key", config.withBot(TOKEN, "cloudgram_bot").encryptionKey());
+		assertEquals("recovery-key", config.withBackupOnExit(true).encryptionKey());
+	}
+
+	@Test
+	void oldConfigsWithoutAKeyStayReadable() {
+		CloudgramConfig legacy = new CloudgramConfig(
+				CloudgramConfig.CURRENT_FORMAT, TOKEN, "cloudgram_bot", 42L, "sey", 1L, true);
+
+		assertFalse(legacy.hasEncryptionKey());
+		assertNull(legacy.encryptionKey());
+		assertTrue(legacy.isBound());
+	}
+
+	@Test
+	void rejectsBlankEncryptionKeys() {
+		assertThrows(IllegalArgumentException.class,
+				() -> CloudgramConfig.empty().withEncryptionKey(" "));
+		assertThrows(IllegalArgumentException.class,
+				() -> new CloudgramConfig(
+						CloudgramConfig.CURRENT_FORMAT, null, null, null, null, 0L, true, " "));
+	}
 }

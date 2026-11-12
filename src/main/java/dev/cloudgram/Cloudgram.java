@@ -7,6 +7,8 @@ import dev.cloudgram.core.SnapshotService;
 import dev.cloudgram.core.WorldIdentity;
 import dev.cloudgram.core.config.CloudgramConfig;
 import dev.cloudgram.core.config.ConfigStore;
+import dev.cloudgram.core.crypto.EncryptionKey;
+import dev.cloudgram.core.crypto.PayloadCipher;
 import dev.cloudgram.core.telegram.HttpTelegramTransport;
 import dev.cloudgram.core.upload.SnapshotUploader;
 import dev.cloudgram.core.upload.UploadException;
@@ -38,6 +40,8 @@ public final class Cloudgram implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		ensureEncryptionKey();
+
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			Path worldDir = server.getWorldPath(LevelResource.ROOT);
 			try {
@@ -108,6 +112,27 @@ public final class Cloudgram implements ModInitializer {
 		});
 	}
 
+	/**
+	 * Creates the recovery key on first launch and persists it before any world can be uploaded.
+	 *
+	 * <p>Generation happens here, not lazily at upload time: a key that cannot be saved must disable
+	 * uploads instead of producing a snapshot encrypted with a key that is then lost.
+	 */
+	private static void ensureEncryptionKey() {
+		try {
+			ConfigStore store = ConfigStore.inDirectory(FabricLoader.getInstance().getConfigDir());
+			CloudgramConfig config = store.load();
+			if (config.hasEncryptionKey()) {
+				return;
+			}
+			EncryptionKey key = EncryptionKey.generate();
+			store.save(config.withEncryptionKey(key.toBase64()));
+			LOG.info("Cloudgram created a backup key (fingerprint {})", key.fingerprint());
+		} catch (IOException e) {
+			LOG.warn("Cloudgram could not create its backup key; uploads stay disabled until it can", e);
+		}
+	}
+
 	/** Uploads the finished snapshot when a bot chat is bound; never touches the local copy. */
 	private static void uploadIfConfigured(SnapshotResult snapshot) {
 		CloudgramConfig config;
@@ -125,9 +150,22 @@ public final class Cloudgram implements ModInitializer {
 			LOG.info("Cloudgram upload skipped: no bot chat is bound yet");
 			return;
 		}
+		if (!config.hasEncryptionKey()) {
+			LOG.warn("Cloudgram upload skipped: no backup key is stored; open Cloudgram setup to create one");
+			return;
+		}
+
+		EncryptionKey key;
+		try {
+			key = EncryptionKey.fromBase64(config.encryptionKey());
+		} catch (IllegalArgumentException e) {
+			LOG.warn("Cloudgram upload skipped: the stored backup key is invalid ({})", e.getMessage());
+			return;
+		}
 
 		try {
-			UploadRecord record = new SnapshotUploader(new HttpTelegramTransport())
+			UploadRecord record = new SnapshotUploader(
+					new HttpTelegramTransport(), new PayloadCipher(key))
 					.upload(config.botToken(), config.chatId(), snapshot);
 			int parts = record.packs().stream().mapToInt(pack -> pack.parts().size()).sum();
 			LOG.info(

@@ -33,7 +33,8 @@ class ConfigStoreTest {
 		CloudgramConfig config = CloudgramConfig.empty()
 				.withBot(TOKEN, "cloudgram_bot")
 				.withBinding(42L, "sey", 1_800_000_000L)
-				.withBackupOnExit(false);
+				.withBackupOnExit(false)
+				.withEncryptionKey("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8");
 
 		store.save(config);
 

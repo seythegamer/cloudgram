@@ -30,6 +30,18 @@ for a fresh binding because the wizard records the update cursor before asking y
 The status line should read **Connected to …**. Click **Done**; the wizard will remember the bot
 and chat on the next launch.
 
+## 4. Save your recovery key
+
+The first launch creates a random 256-bit backup key. Uploaded packs and manifests are encrypted
+with it, so the Telegram copies cannot be read without it.
+
+1. Open **Cloudgram** again while the chat is bound.
+2. Click **Copy recovery key** and store the copied value somewhere safe (a password manager).
+3. Repeat on every device where you might want to restore. The same key opens the same backups.
+
+The key is stored in `config/cloudgram.json` and is never displayed in the wizard. Keep the file
+private; losing the key means losing access to the encrypted Telegram copies.
+
 ## Troubleshooting
 
 | Message | Meaning |
@@ -40,7 +52,7 @@ and chat on the next launch.
 | `Telegram is rate limiting requests` | Wait the shown number of seconds and retry. |
 | `Cannot reach Telegram` | No internet, a proxy, or `api.telegram.org` is blocked. |
 
-## Where the token is stored
+## Where the token and key are stored
 
 The token lives in `config/cloudgram.json` in the Minecraft game directory
 (`run/config/cloudgram.json` in a development client). It is stored in **plain text**:
@@ -49,9 +61,10 @@ The token lives in `config/cloudgram.json` in the Minecraft game directory
 - On Windows the file inherits the normal user profile ACLs. Windows DPAPI encryption is planned
   as a hardening step.
 
-Do not share that file, and do not include it in a bug report. If it leaks, open BotFather, pick
-the bot, and use **Revoke current token**; the old token stops working immediately and you can
-paste the new one into the wizard.
+The same file also holds the base64 **recovery key** used for encryption. Do not share that file,
+and do not include it in a bug report. If the token leaks, open BotFather, pick the bot, and use
+**Revoke current token**; the old token stops working immediately and you can paste the new one into
+the wizard. Rotating the bot token does not change the backup key.
 
 ## What the bot can see
 

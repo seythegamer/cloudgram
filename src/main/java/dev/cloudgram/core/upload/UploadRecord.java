@@ -17,6 +17,10 @@ import java.util.List;
  * <p>Written next to the manifest as {@code upload.json}. The manifest message id doubles as the
  * human-visible restore code ({@code CG1-<messageId>}); the per-part file ids are what a restore
  * needs to download bytes again without any chat history API.
+ *
+ * <p>{@code encryption} is the scheme used for every uploaded object ({@code null} for snapshots
+ * made before encryption existed) and {@code keyFingerprint} identifies the recovery key without
+ * revealing it.
  */
 public record UploadRecord(
 		String format,
@@ -27,7 +31,9 @@ public record UploadRecord(
 		List<PackUpload> packs,
 		long summaryMessageId,
 		String restoreCode,
-		String warning) {
+		String warning,
+		String encryption,
+		String keyFingerprint) {
 
 	public static final String CURRENT_FORMAT = "cloudgram/upload/1";
 	public static final String FILE_NAME = "upload.json";
@@ -54,7 +60,32 @@ public record UploadRecord(
 		if (summaryMessageId < 0) {
 			throw new IllegalArgumentException("summaryMessageId must not be negative");
 		}
+		if (encryption != null && encryption.isBlank()) {
+			throw new IllegalArgumentException("encryption must not be blank when present");
+		}
+		if (keyFingerprint != null && keyFingerprint.isBlank()) {
+			throw new IllegalArgumentException("keyFingerprint must not be blank when present");
+		}
 		packs = packs == null ? List.of() : List.copyOf(packs);
+	}
+
+	/** Keeps records written before encryption existed readable. */
+	public UploadRecord(
+			String format,
+			String worldId,
+			String snapshotId,
+			long chatId,
+			UploadedDocument manifest,
+			List<PackUpload> packs,
+			long summaryMessageId,
+			String restoreCode,
+			String warning) {
+		this(format, worldId, snapshotId, chatId, manifest, packs, summaryMessageId, restoreCode, warning,
+				null, null);
+	}
+
+	public boolean isEncrypted() {
+		return encryption != null;
 	}
 
 	public String toJson() {

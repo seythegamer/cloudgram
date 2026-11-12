@@ -8,6 +8,9 @@ import dev.cloudgram.core.PackSplitter;
 import dev.cloudgram.core.SnapshotManifest;
 import dev.cloudgram.core.SnapshotResult;
 import dev.cloudgram.core.WorldIdentity;
+import dev.cloudgram.core.crypto.Aad;
+import dev.cloudgram.core.crypto.EncryptionKey;
+import dev.cloudgram.core.crypto.PayloadCipher;
 import dev.cloudgram.core.telegram.BotInfo;
 import dev.cloudgram.core.telegram.IncomingMessage;
 import dev.cloudgram.core.telegram.TelegramException;
@@ -43,8 +46,10 @@ class SnapshotUploaderTest {
 
 	private final FakeTransport transport = new FakeTransport();
 	private final List<Long> sleeps = new ArrayList<>();
+	private final EncryptionKey key = EncryptionKey.generate();
+	private final PayloadCipher cipher = new PayloadCipher(key);
 	private final SnapshotUploader uploader = new SnapshotUploader(
-			transport, new UploadOptions(3, 0, 0), millis -> sleeps.add(millis));
+			transport, cipher, new UploadOptions(3, 0, 0), millis -> sleeps.add(millis));
 
 	@Test
 	void uploadsPartsThenManifestThenSummaryAndWritesTheRecord() throws Exception {
@@ -70,16 +75,25 @@ class SnapshotUploaderTest {
 		int index = 0;
 		for (BuiltPack pack : List.of(cell, meta)) {
 			for (PackPart part : pack.parts()) {
-				assertArrayEquals(PartReader.read(pack.file(), part), transport.documents.get(index++).content());
+				byte[] encrypted = transport.documents.get(index++).content();
+				assertTrue(PayloadCipher.isEncrypted(encrypted), "parts never leave in plaintext");
+				assertArrayEquals(
+						PartReader.read(pack.file(), part),
+						cipher.decrypt(encrypted,
+								Aad.part(WORLD_ID, SNAPSHOT_ID, pack.id(), part.index())));
 			}
 		}
 		SentDocument manifest = transport.documents.get(index);
 		assertTrue(manifest.fileName().endsWith("_manifest.json"));
+		assertTrue(PayloadCipher.isEncrypted(manifest.content()), "the manifest is encrypted too");
 		assertArrayEquals(
 				Files.readAllBytes(snapshot.directory().resolve("manifest.json")),
-				manifest.content());
+				cipher.decrypt(manifest.content(), Aad.manifest(WORLD_ID, SNAPSHOT_ID)));
 
 		assertEquals("CG1-" + record.manifest().messageId(), record.restoreCode());
+		assertEquals(PayloadCipher.SCHEME, record.encryption());
+		assertEquals(cipher.keyFingerprint(), record.keyFingerprint());
+		assertTrue(record.isEncrypted());
 		assertTrue(transport.texts.getFirst().contains(record.restoreCode()));
 		assertTrue(transport.texts.getFirst().contains("Survival"));
 		assertEquals(transport.summaryMessageId, record.summaryMessageId());
@@ -110,7 +124,7 @@ class SnapshotUploaderTest {
 		transport.documentFailure = new TelegramException("Cannot reach Telegram", new IOException("offline"));
 		transport.documentFailures = 1;
 		SnapshotUploader backoff = new SnapshotUploader(
-				transport, new UploadOptions(3, 10, 0), millis -> sleeps.add(millis));
+				transport, cipher, new UploadOptions(3, 10, 0), millis -> sleeps.add(millis));
 
 		backoff.upload(TOKEN, CHAT_ID, snapshot(pack("meta", "abcd")));
 
@@ -123,7 +137,7 @@ class SnapshotUploaderTest {
 		transport.documentFailure = new TelegramException(429, "Too Many Requests", 0);
 		transport.documentFailures = 100;
 		SnapshotUploader limited = new SnapshotUploader(
-				transport, new UploadOptions(3, 0, 0), millis -> sleeps.add(millis));
+				transport, cipher, new UploadOptions(3, 0, 0), millis -> sleeps.add(millis));
 
 		UploadException error = assertThrows(UploadException.class,
 				() -> limited.upload(TOKEN, CHAT_ID, snapshot(pack("meta", "abcd"))));

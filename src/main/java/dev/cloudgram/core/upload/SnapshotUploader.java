@@ -4,6 +4,8 @@ import dev.cloudgram.core.BuiltPack;
 import dev.cloudgram.core.ObjectNames;
 import dev.cloudgram.core.PackPart;
 import dev.cloudgram.core.SnapshotResult;
+import dev.cloudgram.core.crypto.Aad;
+import dev.cloudgram.core.crypto.PayloadCipher;
 import dev.cloudgram.core.telegram.TelegramException;
 import dev.cloudgram.core.telegram.TelegramTransport;
 import dev.cloudgram.core.telegram.UploadedDocument;
@@ -23,22 +25,30 @@ import java.util.Locale;
  * snapshot "exists" once its manifest is in the chat, so an interrupted upload leaves only orphan
  * parts that are harmless. The record written to {@code upload.json} captures Telegram's file ids
  * for the restore path.
+ *
+ * <p>Every object is encrypted with {@link PayloadCipher} before it is handed to the transport.
+ * The cipher is required: there is deliberately no constructor that would upload plaintext.
  */
 public final class SnapshotUploader {
 	private static final int MAX_CAPTION_LENGTH = 1_000;
 	private static final long MAX_RETRY_DELAY_MILLIS = 30_000;
 
 	private final TelegramTransport transport;
+	private final PayloadCipher cipher;
 	private final UploadOptions options;
 	private final Sleeper sleeper;
 
-	public SnapshotUploader(TelegramTransport transport) {
-		this(transport, UploadOptions.defaults(), Thread::sleep);
+	public SnapshotUploader(TelegramTransport transport, PayloadCipher cipher) {
+		this(transport, cipher, UploadOptions.defaults(), Thread::sleep);
 	}
 
-	public SnapshotUploader(TelegramTransport transport, UploadOptions options, Sleeper sleeper) {
+	public SnapshotUploader(
+			TelegramTransport transport, PayloadCipher cipher, UploadOptions options, Sleeper sleeper) {
 		if (transport == null) {
 			throw new IllegalArgumentException("transport is required");
+		}
+		if (cipher == null) {
+			throw new IllegalArgumentException("cipher is required");
 		}
 		if (options == null) {
 			throw new IllegalArgumentException("options is required");
@@ -47,6 +57,7 @@ public final class SnapshotUploader {
 			throw new IllegalArgumentException("sleeper is required");
 		}
 		this.transport = transport;
+		this.cipher = cipher;
 		this.options = options;
 		this.sleeper = sleeper;
 	}
@@ -80,8 +91,10 @@ public final class SnapshotUploader {
 					throw new UploadException("Could not read " + pack.file() + " part " + part.index(), e);
 				}
 				String fileName = ObjectNames.partFileName(worldId, pack.id(), pack.sha256(), part.index());
+				byte[] encrypted = cipher.encrypt(
+						bytes, Aad.part(worldId, snapshotId, pack.id(), part.index()));
 				UploadedDocument document = uploadDocument(
-						token, chatId, fileName, bytes, partCaption(snapshot, pack, part));
+						token, chatId, fileName, encrypted, partCaption(snapshot, pack, part));
 				uploadedParts.add(document);
 				pauseBetweenUploads();
 			}
@@ -90,8 +103,9 @@ public final class SnapshotUploader {
 
 		byte[] manifestBytes = readManifest(snapshot.directory());
 		String manifestName = ObjectNames.manifestFileName(worldId, snapshotId);
+		byte[] encryptedManifest = cipher.encrypt(manifestBytes, Aad.manifest(worldId, snapshotId));
 		UploadedDocument manifest = uploadDocument(
-				token, chatId, manifestName, manifestBytes, manifestCaption(snapshot));
+				token, chatId, manifestName, encryptedManifest, manifestCaption(snapshot));
 		pauseBetweenUploads();
 
 		String restoreCode = ObjectNames.restoreCode(manifest.messageId());
@@ -116,7 +130,9 @@ public final class SnapshotUploader {
 				uploadedPacks,
 				summaryMessageId,
 				restoreCode,
-				warning);
+				warning,
+				PayloadCipher.SCHEME,
+				cipher.keyFingerprint());
 		try {
 			record.writeTo(snapshot.directory());
 		} catch (IOException e) {
@@ -209,7 +225,8 @@ public final class SnapshotUploader {
 				+ "\n" + snapshot.manifest().world().name()
 				+ "\nManifest: " + snapshot.packs().size() + " packs, "
 				+ snapshot.manifest().stats().files() + " files, "
-				+ String.format(Locale.ROOT, "%.1f", snapshot.totalPackBytes() / 1048576.0) + " MiB";
+				+ String.format(Locale.ROOT, "%.1f", snapshot.totalPackBytes() / 1048576.0) + " MiB"
+				+ "\nEncrypted: " + PayloadCipher.SCHEME;
 		return clampCaption(text);
 	}
 
@@ -221,6 +238,7 @@ public final class SnapshotUploader {
 				+ String.format(Locale.ROOT, "%.1f", snapshot.totalPackBytes() / 1048576.0) + " MiB, "
 				+ snapshot.packs().size() + " packs"
 				+ "\nRestore code: " + restoreCode
+				+ "\nEncryption: " + PayloadCipher.SCHEME
 				+ "\nDevice: " + snapshot.manifest().snapshot().device();
 		return clampCaption(text);
 	}

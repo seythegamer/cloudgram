@@ -4,6 +4,7 @@ import com.mojang.blaze3d.Blaze3D;
 import dev.cloudgram.Cloudgram;
 import dev.cloudgram.core.config.CloudgramConfig;
 import dev.cloudgram.core.config.ConfigStore;
+import dev.cloudgram.core.crypto.EncryptionKey;
 import dev.cloudgram.core.setup.Binding;
 import dev.cloudgram.core.setup.SetupException;
 import dev.cloudgram.core.setup.TelegramSetup;
@@ -58,6 +59,7 @@ public final class CloudgramSetupScreen extends Screen {
 	private boolean verified;
 	private long cursor;
 	private Binding binding;
+	private String recoveryKey;
 
 	private String status = "";
 	private int statusColor = COLOR_BODY;
@@ -173,6 +175,11 @@ public final class CloudgramSetupScreen extends Screen {
 						.build();
 				addRenderableWidget(replace);
 			}
+
+			Button copyKey = Button.builder(Component.literal("Copy recovery key"), button -> copyRecoveryKey())
+					.bounds(left, actionsY + 24, CONTENT_WIDTH, BUTTON_HEIGHT)
+					.build();
+			addRenderableWidget(copyKey);
 			return;
 		}
 
@@ -219,6 +226,11 @@ public final class CloudgramSetupScreen extends Screen {
 		if (!status.isBlank()) {
 			graphics.textWithWordWrap(font, Component.literal(status), left, statusY, CONTENT_WIDTH, statusColor);
 		}
+
+		if (binding != null) {
+			graphics.text(font, Component.literal("Recovery key: copy it for other PCs"),
+					left, actionsY + 8, COLOR_WARN);
+		}
 	}
 
 	@Override
@@ -240,6 +252,7 @@ public final class CloudgramSetupScreen extends Screen {
 			tokenValue = config.botToken() == null ? "" : config.botToken();
 			tokenFromConfig = config.hasBot();
 			botUsername = config.botUsername();
+			recoveryKey = config.encryptionKey();
 			if (config.isBound()) {
 				binding = new Binding(config.chatId(), config.chatTitle(), "private", config.boundAt());
 				setStatus("Connected to " + config.chatTitle() + ". Backups go to this chat.",
@@ -338,7 +351,12 @@ public final class CloudgramSetupScreen extends Screen {
 				CloudgramConfig config = loadForUpdate()
 						.withBot(token, username)
 						.withBinding(bound.chatId(), bound.title(), bound.boundAt());
+				if (!config.hasEncryptionKey()) {
+					// Generate before the binding is saved: a chat without a key could never upload.
+					config = config.withEncryptionKey(EncryptionKey.generate().toBase64());
+				}
 				configStore.save(config);
+				String key = config.encryptionKey();
 
 				String warning = null;
 				try {
@@ -350,6 +368,7 @@ public final class CloudgramSetupScreen extends Screen {
 				String extra = warning;
 				onClient(() -> {
 					binding = bound;
+					recoveryKey = key;
 					busy = false;
 					setStatus("Connected to " + bound.title() + ". Backups will be sent to this chat."
 							+ (extra == null ? "" : extra), extra == null ? COLOR_OK : COLOR_WARN);
@@ -383,6 +402,47 @@ public final class CloudgramSetupScreen extends Screen {
 		}
 		setStatus("Paste the token of the bot you want to use.", COLOR_BODY);
 		refresh();
+	}
+
+	private void copyRecoveryKey() {
+		if (minecraft == null || minecraft.keyboardHandler == null) {
+			return;
+		}
+		if (recoveryKey != null && !recoveryKey.isBlank()) {
+			minecraft.keyboardHandler.setClipboard(recoveryKey);
+			setStatus("Recovery key copied. Keep it private; it is required to restore on another PC.",
+					COLOR_OK);
+			refresh();
+			return;
+		}
+
+		setStatus("Creating a recovery key...", COLOR_BODY);
+		refresh();
+		IO.execute(() -> {
+			try {
+				CloudgramConfig config = loadForUpdate();
+				String key = config.encryptionKey();
+				if (key == null || key.isBlank()) {
+					key = EncryptionKey.generate().toBase64();
+					configStore.save(config.withEncryptionKey(key));
+				}
+				String saved = key;
+				onClient(() -> {
+					recoveryKey = saved;
+					if (minecraft != null && minecraft.keyboardHandler != null) {
+						minecraft.keyboardHandler.setClipboard(saved);
+					}
+					setStatus("Recovery key copied. Keep it private; it is required to restore on another PC.",
+							COLOR_OK);
+					refresh();
+				});
+			} catch (IOException e) {
+				onClient(() -> fail("Could not save the recovery key: " + e.getMessage()));
+			} catch (RuntimeException e) {
+				Cloudgram.LOG.warn("Cloudgram could not create a recovery key", e);
+				onClient(() -> fail("Could not create the recovery key: " + e.getMessage()));
+			}
+		});
 	}
 
 	private CloudgramConfig loadForUpdate() {

@@ -3,14 +3,14 @@
 Back up your singleplayer Minecraft worlds to **your own Telegram bot chat**.
 
 - No account, no server, no relay — the mod talks straight to `api.telegram.org` with a bot token you create.
-- Snapshots are designed to be encrypted before upload; **encryption is the next milestone**, so
-  development builds currently upload plaintext.
+- Snapshot packs and manifests are encrypted with AES-256-GCM before upload; the key stays on your
+  machine and is never derived from the bot token.
 - Telegram is treated as a transport, not as the only copy: the local save always stays on disk.
 
-> Status: setup, local snapshots and Telegram upload work. Leaving a world force-saves and packs it,
-> then uploads every pack part, the manifest, and a summary with a `CG1-…` restore code. Restore and
-> encryption are next; do not use development builds for worlds whose data you would not put in that
-> Telegram chat.
+> Status: setup, local snapshots, encrypted upload and recovery-key export work. Leaving a world
+> force-saves and packs it, then uploads every encrypted part, the encrypted manifest, and a summary
+> with a `CG1-…` restore code. Restore is the next milestone. Backups made *before* encryption
+> existed are plaintext; the restore path will detect both formats.
 
 ## Requirements
 
@@ -59,7 +59,8 @@ and where the token is stored. The short version:
 2. Title screen → **Cloudgram** → paste → **Verify token**.
 3. **Open bot chat** → press **Start** → **I pressed Start**.
 4. The status line shows **Connected to …**; the bot and chat are remembered in
-   `config/cloudgram.json`.
+   `config/cloudgram.json`. Use **Copy recovery key** to save the key you will need to restore on
+   another PC.
 
 ## Snapshot format
 
@@ -82,25 +83,34 @@ Telegram 5xx responses are retried with backoff; a retry may produce a duplicate
 harmless because snapshots are append-only. If the upload fails, the complete snapshot stays in
 `<gameDir>/cloudgram/vault/` and the failure is logged.
 
+Before each document is sent it is encrypted with AES-256-GCM (`aes-256-gcm/v1`, `CG1E` header,
+fresh 12-byte nonce) and bound to its world, snapshot, pack and part index. The key is generated on
+first launch, stored in `config/cloudgram.json`, and independent of the bot token. There is no
+plaintext fallback: if the key cannot be read, the upload is skipped and the local copy remains.
+
 Each uploaded snapshot also gets an `upload.json` next to its manifest, recording Telegram's
-message ids, file ids and the restore code. That file is what the future restore path will use; it
-is never uploaded and never contains the bot token.
+message ids, file ids, the restore code, the encryption scheme and a short key fingerprint. That
+file is what the future restore path will use; it is never uploaded and never contains the bot
+token or the encryption key.
 
 ## How it is meant to work
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and paste the token into the mod. ✅
 2. Press **Start** in the bot chat; the mod binds to that chat automatically. ✅
-3. Quit a world → the world is force-saved, packed and uploaded. ✅ encryption is next
+3. Quit a world → the world is force-saved, packed, encrypted and uploaded. ✅
 4. On another PC, the pinned catalog lists your snapshots; restore as a copy, never silently over an existing world. ⏳
 
-Currently implemented: setup, force-save, packing, upload with retries, and the local upload
-record. Encryption and restore are the next milestones.
+Currently implemented: setup, force-save, packing, encrypted upload with retries, recovery-key
+export, and the local upload record. Restore/import is the next milestone.
 
 ## Security notes
 
 - The bot token is stored in plain text in `config/cloudgram.json`. On POSIX systems the file is
   created with owner-only permissions; on Windows it relies on the user profile ACLs. DPAPI
   encryption is planned.
+- The backup key is stored in the same file as URL-safe base64. It is never uploaded, never
+  logged, and never displayed by the setup screen; the wizard only copies it to the clipboard on
+  request. Losing it means the Telegram copies cannot be decrypted.
 - The mod never sends the token anywhere except `api.telegram.org`, and never logs it.
 - Leaked tokens are revoked in BotFather (**Revoke current token**), not by editing files.
 

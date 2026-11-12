@@ -168,13 +168,29 @@ The manifest is the existence marker: an interrupted upload leaves only orphan p
 ignores. A retried request can produce a duplicate message; duplicates are harmless because a
 snapshot is immutable and identified by its manifest.
 
-Until the encryption milestone, uploaded packs and manifests are the plaintext bytes described
-above. Encryption will be a transport transform applied after these bytes (and their hashes) exist.
+### Encryption
+
+Every pack part and the manifest is encrypted before `sendDocument`:
+
+- scheme `aes-256-gcm/v1`: AES-256-GCM with a fresh random 12-byte nonce and a 16-byte tag;
+- object layout `"CG1E" | version 1 | nonce | ciphertext | tag` (5 + 12 + n + 16 bytes);
+- AAD binds each object to its place: `worldId`, `snapshotId`, `packId` and part index for parts,
+  `worldId` and `snapshotId` for the manifest. A valid part cannot be replayed as another part,
+  pack or snapshot even though every object shares one key;
+- the 256-bit key is random, independent of the bot token, stored in `cloudgram.json`, and
+  copyable from the setup screen as a recovery key;
+- hashes in the manifest stay over the plaintext bytes, so deduplication is unchanged and a
+  restore can verify after decryption;
+- there is deliberately no plaintext upload path: if the key is missing or unreadable, the upload
+  is skipped and the local vault copy stays complete.
+
+An encrypted object is 33 bytes larger than its plaintext, so a 19 MiB part still fits under the
+20 MB `getFile` download limit.
 
 ### Local upload record
 
 `upload.json` is written next to the manifest after a successful upload. It is never uploaded and
-never contains the bot token:
+never contains the bot token or the encryption key:
 
 ```json
 {
@@ -193,18 +209,22 @@ never contains the bot token:
     }
   ],
   "summaryMessageId": 43,
-  "restoreCode": "CG1-42"
+  "restoreCode": "CG1-42",
+  "encryption": "aes-256-gcm/v1",
+  "keyFingerprint": "9c1f00a7b3d24e88"
 }
 ```
 
 `summaryMessageId` is `0` when the summary could not be sent; the snapshot is still complete because
-the manifest is already in the chat.
+the manifest is already in the chat. `encryption` and `keyFingerprint` are absent in records written
+before encryption existed; those snapshots are plaintext and must be handled as such by restore.
 
 ## 7. What this format deliberately does not do
 
 - **No merge.** Snapshots are immutable; restoring is an explicit user choice.
 - **No outer compression.** See §4.3.
-- **No encryption here.** Packs are encrypted *after* being built, as a transport transform;
-  hashes in the manifest stay computed over plaintext packs so deduplication still works.
+- **No encryption inside the pack format.** Packs and manifests are encrypted on the way to
+  Telegram, as a transport transform; hashes in the manifest stay computed over plaintext packs so
+  deduplication still works.
 - **No deletion semantics.** Retention/GC is a separate layer that reference-counts packs across
   retained manifests.
