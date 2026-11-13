@@ -5,6 +5,8 @@ import dev.cloudgram.core.SnapshotRequest;
 import dev.cloudgram.core.SnapshotResult;
 import dev.cloudgram.core.SnapshotService;
 import dev.cloudgram.core.WorldIdentity;
+import dev.cloudgram.core.catalog.Catalog;
+import dev.cloudgram.core.catalog.CatalogMirror;
 import dev.cloudgram.core.catalog.CatalogService;
 import dev.cloudgram.core.config.CloudgramConfig;
 import dev.cloudgram.core.config.ConfigStore;
@@ -270,7 +272,9 @@ public final class Cloudgram implements ModInitializer {
 				CatalogService catalog = new CatalogService(
 						new HttpTelegramTransport(), new PayloadCipher(key));
 				CatalogService.Fetched fetched = catalog.publishSnapshot(
-						config.botToken(), config.chatId(), snapshot.manifest(), record);
+						config.botToken(), config.chatId(), snapshot.manifest(), record,
+						mirroredCatalog(config.chatId()));
+				saveCatalogMirror(config.chatId(), fetched.catalog());
 				LOG.info("Cloudgram pinned catalog now lists {} snapshots",
 						fetched.catalog().snapshots().size());
 			} catch (Exception e) {
@@ -358,6 +362,34 @@ public final class Cloudgram implements ModInitializer {
 
 	private static Path vaultDir() {
 		return FabricLoader.getInstance().getGameDir().resolve(MOD_ID).resolve("vault");
+	}
+
+	private static Path catalogMirrorFile() {
+		return FabricLoader.getInstance().getGameDir().resolve(MOD_ID).resolve(CatalogMirror.FILE_NAME);
+	}
+
+	/**
+	 * The last catalog this installation published for {@code chatId}.
+	 *
+	 * <p>Only used when the chat has no pinned catalog at all, so an accidental unpin does not
+	 * orphan every snapshot that came before it.
+	 */
+	private static Catalog mirroredCatalog(long chatId) {
+		try {
+			CatalogMirror mirror = CatalogMirror.load(catalogMirrorFile(), chatId);
+			return mirror == null ? Catalog.empty() : mirror.catalog();
+		} catch (IOException e) {
+			LOG.warn("Cloudgram could not read its local catalog mirror", e);
+			return Catalog.empty();
+		}
+	}
+
+	private static void saveCatalogMirror(long chatId, Catalog catalog) {
+		try {
+			new CatalogMirror(CatalogMirror.CURRENT_FORMAT, chatId, catalog).save(catalogMirrorFile());
+		} catch (IOException e) {
+			LOG.warn("Cloudgram could not update its local catalog mirror", e);
+		}
 	}
 
 	/** A human-readable device name, used only in the snapshot manifest and the setup greeting. */

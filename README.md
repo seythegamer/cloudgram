@@ -125,6 +125,14 @@ that offer; the restore list remains available.
 A new PC needs the recovery key from the PC that created the backups. Open **Restore from
 Telegram...** and use **Change key...** to paste it; uploads from the new PC then use the same key.
 
+The pinned catalog is also the only way to *find* a snapshot: the Bot API cannot look up a message
+by id, so a restore code such as `CG1-42` identifies a backup in the chat but cannot be resolved
+without the catalog. Do not unpin or delete the catalog message. If it is lost anyway, the next
+upload repairs it from a local mirror of the last published catalog
+(`<gameDir>/cloudgram/catalog.json`, written after every upload and bound to the chat id), so the
+snapshots that came before it stay discoverable on that PC. A device that has never uploaded has no
+mirror, which is why the vault of at least one device is worth keeping.
+
 ## How it is meant to work
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and paste the token into the mod. ✅

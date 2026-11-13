@@ -28,6 +28,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -109,6 +110,39 @@ class CatalogServiceTest {
 		assertEquals(2, second.catalog().snapshots().size());
 		assertEquals(second.catalog(), service.fetch(TOKEN, CHAT_ID).catalog());
 		assertEquals("CG1-20", second.catalog().findByRestoreCode("cg1-20").restoreCode());
+	}
+
+	@Test
+	void aLostPinIsRebuiltFromTheLocalMirror() throws Exception {
+		Catalog mirror = Catalog.empty().withSnapshot(snapshot("CG1-2", 2), 1L);
+
+		CatalogService.Fetched published = service.publishSnapshot(
+				TOKEN, CHAT_ID,
+				manifest("20261111T230000Z-cccccc"),
+				record(manifest("20261111T230000Z-cccccc"), "CG1-30", 30L),
+				mirror);
+
+		assertEquals(2, published.catalog().snapshots().size());
+		assertNotNull(published.catalog().findByRestoreCode("CG1-2"),
+				"the entry from the local mirror survives the lost pin");
+		assertNotNull(published.catalog().findByRestoreCode("CG1-30"));
+	}
+
+	@Test
+	void anExistingCatalogAlwaysWinsOverTheMirror() throws Exception {
+		service.publish(TOKEN, CHAT_ID, Catalog.empty().withSnapshot(snapshot("CG1-5", 5), 1L), 0L);
+		Catalog staleMirror = Catalog.empty().withSnapshot(snapshot("CG1-99", 99), 2L);
+
+		CatalogService.Fetched published = service.publishSnapshot(
+				TOKEN, CHAT_ID,
+				manifest("20261111T230000Z-cccccc"),
+				record(manifest("20261111T230000Z-cccccc"), "CG1-30", 30L),
+				staleMirror);
+
+		assertEquals(2, published.catalog().snapshots().size());
+		assertNotNull(published.catalog().findByRestoreCode("CG1-5"));
+		assertNull(published.catalog().findByRestoreCode("CG1-99"),
+				"a stale mirror must never add entries to a catalog that still exists");
 	}
 
 	@Test

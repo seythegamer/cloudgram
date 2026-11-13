@@ -290,6 +290,10 @@ is the only discovery channel. It holds a small summary per snapshot and points 
   catalog update never invalidates a backup; the next upload repairs it.
 - A pinned text message (the setup greeting) or a pinned document with another name means "no
   catalog yet"; Cloudgram never overwrites an unrelated pin.
+- If the pin is lost, the next upload starts from a local mirror of the last published catalog
+  (`<gameDir>/cloudgram/catalog.json`). The mirror stores the chat id, because file ids only exist
+  in one chat, and it is only used when the chat has no catalog at all; a catalog that is present
+  always wins. Index documents are never deleted, so the restored entries still resolve.
 - Catalogs written before the index existed embed `manifest` and `packs` directly. Both shapes are
   read and restored through the same path; only new entries are indexed.
 - `encryption` is absent for entries created from pre-encryption uploads; their parts are plaintext.

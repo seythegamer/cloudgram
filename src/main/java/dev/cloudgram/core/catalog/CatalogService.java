@@ -96,15 +96,34 @@ public final class CatalogService {
 	public Fetched publishSnapshot(
 			String token, long chatId, SnapshotManifest manifest, UploadRecord record)
 			throws TelegramException, CryptoException, IOException {
+		return publishSnapshot(token, chatId, manifest, record, Catalog.empty());
+	}
+
+	/**
+	 * Like {@link #publishSnapshot(String, long, SnapshotManifest, UploadRecord)}, but starts from
+	 * {@code fallback} when the chat has no pinned catalog.
+	 *
+	 * <p>That happens when the pin was deleted or replaced by an unrelated message. Falling back to
+	 * the last catalog this installation published keeps the snapshots that came before it
+	 * discoverable, because their index documents are still in the chat. A catalog that is present
+	 * always wins: the fallback is never merged into it.
+	 */
+	public Fetched publishSnapshot(
+			String token, long chatId, SnapshotManifest manifest, UploadRecord record, Catalog fallback)
+			throws TelegramException, CryptoException, IOException {
 		if (manifest == null) {
 			throw new IllegalArgumentException("manifest is required");
 		}
 		if (record == null) {
 			throw new IllegalArgumentException("record is required");
 		}
+		if (fallback == null) {
+			throw new IllegalArgumentException("fallback is required");
+		}
 		Fetched current = fetch(token, chatId);
+		Catalog base = current.catalog().snapshots().isEmpty() ? fallback : current.catalog();
 		Catalog.Snapshot entry = publishIndex(token, chatId, manifest, record);
-		Catalog next = current.catalog().withSnapshot(entry);
+		Catalog next = base.withSnapshot(entry);
 		return publish(token, chatId, next, current.messageId());
 	}
 
