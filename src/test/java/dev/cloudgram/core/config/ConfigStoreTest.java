@@ -96,6 +96,21 @@ class ConfigStoreTest {
 	}
 
 	@Test
+	void configsWithoutTheImportPromptFieldStillLoad() throws IOException {
+		ConfigStore store = new ConfigStore(tempDir.resolve("cloudgram.json"));
+		Files.writeString(
+				store.file(),
+				"{\"format\":\"cloudgram/config/1\",\"botToken\":\"" + TOKEN
+						+ "\",\"botUsername\":\"cloudgram_bot\",\"chatId\":42,\"chatTitle\":\"sey\"}",
+				StandardCharsets.UTF_8);
+
+		CloudgramConfig config = store.load();
+
+		assertTrue(config.isBound());
+		assertFalse(config.importPrompted(), "installs from before the prompt must be offered it once");
+	}
+
+	@Test
 	void createsMissingParentDirectory() throws IOException {
 		ConfigStore store = new ConfigStore(tempDir.resolve("a/b/c/cloudgram.json"));
 

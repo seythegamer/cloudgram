@@ -24,7 +24,8 @@ public record CloudgramConfig(
 		String chatTitle,
 		long boundAt,
 		boolean backupOnExit,
-		String encryptionKey) {
+		String encryptionKey,
+		boolean importPrompted) {
 
 	public static final String CURRENT_FORMAT = "cloudgram/config/1";
 
@@ -52,6 +53,19 @@ public record CloudgramConfig(
 		}
 	}
 
+	/** Keeps configs written before the import prompt existed readable. */
+	public CloudgramConfig(
+			String format,
+			String botToken,
+			String botUsername,
+			Long chatId,
+			String chatTitle,
+			long boundAt,
+			boolean backupOnExit,
+			String encryptionKey) {
+		this(format, botToken, botUsername, chatId, chatTitle, boundAt, backupOnExit, encryptionKey, false);
+	}
+
 	/** Keeps configs written before encryption existed readable. */
 	public CloudgramConfig(
 			String format,
@@ -61,12 +75,12 @@ public record CloudgramConfig(
 			String chatTitle,
 			long boundAt,
 			boolean backupOnExit) {
-		this(format, botToken, botUsername, chatId, chatTitle, boundAt, backupOnExit, null);
+		this(format, botToken, botUsername, chatId, chatTitle, boundAt, backupOnExit, null, false);
 	}
 
 	/** A config for a fresh installation: no bot, no chat, no key, backups enabled. */
 	public static CloudgramConfig empty() {
-		return new CloudgramConfig(CURRENT_FORMAT, null, null, null, null, 0L, true, null);
+		return new CloudgramConfig(CURRENT_FORMAT, null, null, null, null, 0L, true, null, false);
 	}
 
 	public boolean hasBot() {
@@ -99,7 +113,8 @@ public record CloudgramConfig(
 				sameBot ? chatTitle : null,
 				sameBot ? boundAt : 0L,
 				backupOnExit,
-				encryptionKey);
+				encryptionKey,
+				sameBot && importPrompted);
 	}
 
 	/** Returns a copy bound to {@code chatId}. */
@@ -114,12 +129,14 @@ public record CloudgramConfig(
 			throw new IllegalArgumentException("boundAt must not be negative");
 		}
 		return new CloudgramConfig(
-				CURRENT_FORMAT, botToken, botUsername, chatId, title, boundAt, backupOnExit, encryptionKey);
+				CURRENT_FORMAT, botToken, botUsername, chatId, title, boundAt, backupOnExit, encryptionKey,
+				importPrompted);
 	}
 
 	public CloudgramConfig withBackupOnExit(boolean enabled) {
 		return new CloudgramConfig(
-				CURRENT_FORMAT, botToken, botUsername, chatId, chatTitle, boundAt, enabled, encryptionKey);
+				CURRENT_FORMAT, botToken, botUsername, chatId, chatTitle, boundAt, enabled, encryptionKey,
+				importPrompted);
 	}
 
 	/** Returns a copy carrying the base64 recovery key; an existing key is replaced only here. */
@@ -128,7 +145,19 @@ public record CloudgramConfig(
 			throw new IllegalArgumentException("key is required");
 		}
 		return new CloudgramConfig(
-				CURRENT_FORMAT, botToken, botUsername, chatId, chatTitle, boundAt, backupOnExit, key);
+				CURRENT_FORMAT, botToken, botUsername, chatId, chatTitle, boundAt, backupOnExit, key,
+				importPrompted);
+	}
+
+	/**
+	 * Marks whether this installation has already offered to import the chat's existing snapshots.
+	 *
+	 * <p>Only the prompt is remembered; the restore list stays reachable at any time.
+	 */
+	public CloudgramConfig withImportPrompted(boolean prompted) {
+		return new CloudgramConfig(
+				CURRENT_FORMAT, botToken, botUsername, chatId, chatTitle, boundAt, backupOnExit, encryptionKey,
+				prompted);
 	}
 
 	public boolean hasEncryptionKey() {

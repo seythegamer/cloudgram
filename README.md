@@ -110,6 +110,10 @@ On any device:
 4. Nothing is ever overwritten: a failed restore leaves `saves/` untouched and deletes its temporary
    directory.
 
+When Cloudgram is installed on a machine whose chat already holds snapshots, the title screen checks
+the catalog once in the background and offers **Restore now** / **Not now**. Declining only silences
+that offer; the restore list remains available.
+
 A new PC needs the recovery key from the PC that created the backups. Open **Restore from
 Telegram...** and use **Change key...** to paste it; uploads from the new PC then use the same key.
 

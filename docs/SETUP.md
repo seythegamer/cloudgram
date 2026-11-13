@@ -61,9 +61,14 @@ changed bytes), the `saves` directory is left untouched and the temporary direct
 Install the mod, connect a bot (steps 1–3), then replace the freshly generated key with the one from
 your other PC:
 
-1. Open **Cloudgram** → **Restore from Telegram...**.
-2. Click **Change key...**, paste the recovery key and click **Save key**.
-3. The snapshot list appears. Restore as usual.
+1. The first time the title screen appears, Cloudgram checks the chat in the background. If the
+   chat already holds snapshots it offers **Restore now** / **Not now** (shown once per install).
+2. Open **Cloudgram** → **Restore from Telegram...** (or choose **Restore now** in that offer).
+3. Click **Change key...**, paste the recovery key and click **Save key**.
+4. The snapshot list appears. Restore as usual.
+
+If you chose **Not now**, nothing is lost: the restore list stays available from the Cloudgram
+button, and declining only silences the automatic offer.
 
 The same bot can be used on several PCs; each keeps its own `config/cloudgram.json`.
 

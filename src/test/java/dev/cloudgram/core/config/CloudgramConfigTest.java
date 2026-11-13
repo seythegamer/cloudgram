@@ -120,6 +120,23 @@ class CloudgramConfigTest {
 	}
 
 	@Test
+	void importPromptIsRememberedPerChat() {
+		CloudgramConfig prompted = CloudgramConfig.empty()
+				.withBot(TOKEN, "cloudgram_bot")
+				.withBinding(42L, "sey", 1_800_000_000L)
+				.withImportPrompted(true);
+
+		assertTrue(prompted.importPrompted());
+		assertTrue(prompted.withBackupOnExit(false).importPrompted());
+		assertTrue(prompted.withEncryptionKey("recovery-key").importPrompted());
+		assertTrue(prompted.withBinding(42L, "sey", 1_800_000_000L).importPrompted());
+		assertTrue(prompted.withBot(TOKEN, "cloudgram_bot").importPrompted());
+		assertFalse(prompted.withBot(
+						"987654321:TEST-TOKEN-OTHER-BOT-000000", "other_bot").importPrompted(),
+				"a new bot means a new chat, so the offer is shown again");
+	}
+
+	@Test
 	void rejectsBlankEncryptionKeys() {
 		assertThrows(IllegalArgumentException.class,
 				() -> CloudgramConfig.empty().withEncryptionKey(" "));

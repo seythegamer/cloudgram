@@ -1,9 +1,18 @@
 package dev.cloudgram.client;
 
 import dev.cloudgram.Cloudgram;
+import dev.cloudgram.client.restore.CloudgramImportPromptScreen;
 import dev.cloudgram.client.restore.CloudgramRestoreScreen;
 import dev.cloudgram.client.setup.CloudgramSetupScreen;
+import dev.cloudgram.core.catalog.Catalog;
+import dev.cloudgram.core.config.CloudgramConfig;
 import dev.cloudgram.core.config.ConfigStore;
+import dev.cloudgram.core.crypto.CryptoException;
+import dev.cloudgram.core.crypto.EncryptionKey;
+import dev.cloudgram.core.crypto.PayloadCipher;
+import dev.cloudgram.core.restore.RestoreService;
+import dev.cloudgram.core.telegram.HttpTelegramTransport;
+import dev.cloudgram.core.telegram.TelegramException;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
@@ -14,12 +23,14 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.network.chat.Component;
 
+import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class CloudgramClient implements ClientModInitializer {
 	private static final AtomicBoolean DEV_SETUP_OPENED = new AtomicBoolean();
 	private static final AtomicBoolean DEV_RESTORE_OPENED = new AtomicBoolean();
+	private static final AtomicBoolean IMPORT_CHECK_STARTED = new AtomicBoolean();
 
 	@Override
 	public void onInitializeClient() {
@@ -43,10 +54,75 @@ public final class CloudgramClient implements ClientModInitializer {
 					.build();
 			Screens.getWidgets(screen).add(button);
 
-			if (!maybeOpenRestoreForSelfTest(client, titleScreen, configStore)) {
-				maybeOpenSetupForSelfTest(client, titleScreen, configStore);
+			if (maybeOpenRestoreForSelfTest(client, titleScreen, configStore)) {
+				return;
 			}
+			if (maybeOpenSetupForSelfTest(client, titleScreen, configStore)) {
+				return;
+			}
+			maybeOfferImport(client, titleScreen, configStore);
 		});
+	}
+
+	/**
+	 * Offers, once per installation, to import the snapshots that already sit in the bound chat.
+	 *
+	 * <p>The check runs on a daemon thread so a slow or offline Telegram never delays the title
+	 * screen. It only remembers that the prompt was shown; the restore list itself stays available
+	 * from the Cloudgram button at any time.
+	 */
+	private static void maybeOfferImport(Minecraft client, TitleScreen screen, ConfigStore configStore) {
+		if (!IMPORT_CHECK_STARTED.compareAndSet(false, true)) {
+			return;
+		}
+
+		CloudgramConfig config;
+		try {
+			config = configStore.load();
+		} catch (IOException e) {
+			Cloudgram.LOG.warn("Cloudgram could not read {}", configStore.file(), e);
+			return;
+		}
+		if (!config.isBound() || !config.hasBot() || !config.hasEncryptionKey() || config.importPrompted()) {
+			return;
+		}
+
+		String token = config.botToken();
+		long chatId = config.chatId();
+		String keyValue = config.encryptionKey();
+
+		Thread thread = new Thread(() -> {
+			try {
+				PayloadCipher cipher = new PayloadCipher(EncryptionKey.fromBase64(keyValue));
+				Catalog catalog = new RestoreService(new HttpTelegramTransport(), cipher)
+						.fetchCatalog(token, chatId);
+				int snapshots = catalog.snapshots().size();
+				if (snapshots == 0) {
+					return;
+				}
+
+				Cloudgram.LOG.info("Cloudgram found {} snapshot(s) in the bound chat; offering to import them",
+						snapshots);
+				client.execute(() -> {
+					try {
+						configStore.save(configStore.load().withImportPrompted(true));
+					} catch (IOException e) {
+						Cloudgram.LOG.warn("Cloudgram could not remember the import prompt", e);
+					}
+					if (client.gui.screen() == screen) {
+						client.gui.setScreen(new CloudgramImportPromptScreen(screen, configStore, snapshots));
+					}
+				});
+			} catch (TelegramException | CryptoException | IOException e) {
+				// Try again next launch; the message is enough detail for a log.
+				Cloudgram.LOG.warn("Cloudgram could not check the chat for existing snapshots: {}",
+						e.getMessage());
+			} catch (RuntimeException e) {
+				Cloudgram.LOG.warn("Cloudgram could not check the chat for existing snapshots", e);
+			}
+		}, "cloudgram-import-check");
+		thread.setDaemon(true);
+		thread.start();
 	}
 
 	/**
@@ -83,16 +159,17 @@ public final class CloudgramClient implements ClientModInitializer {
 	 * <p>Inert outside {@code fabric.development=true} and only active with
 	 * {@code -Dcloudgram.selftest.openSetup}.
 	 */
-	private static void maybeOpenSetupForSelfTest(Minecraft client, TitleScreen screen, ConfigStore configStore) {
+	private static boolean maybeOpenSetupForSelfTest(
+			Minecraft client, TitleScreen screen, ConfigStore configStore) {
 		if (!FabricLoader.getInstance().isDevelopmentEnvironment()) {
-			return;
+			return false;
 		}
 		String raw = System.getProperty("cloudgram.selftest.openSetup");
 		if (raw == null || !Boolean.parseBoolean(raw.trim())) {
-			return;
+			return false;
 		}
 		if (!DEV_SETUP_OPENED.compareAndSet(false, true)) {
-			return;
+			return true;
 		}
 
 		Cloudgram.LOG.info("Cloudgram self-test: opening the setup wizard");
@@ -101,6 +178,7 @@ public final class CloudgramClient implements ClientModInitializer {
 				client.gui.setScreen(new CloudgramSetupScreen(screen, configStore));
 			}
 		});
+		return true;
 	}
 
 	/**
