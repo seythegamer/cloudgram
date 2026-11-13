@@ -17,6 +17,7 @@ import dev.cloudgram.core.upload.PendingUploads;
 import dev.cloudgram.core.upload.SnapshotUploader;
 import dev.cloudgram.core.upload.UploadException;
 import dev.cloudgram.core.upload.UploadRecord;
+import dev.cloudgram.core.upload.VaultPruner;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.loader.api.FabricLoader;
@@ -281,6 +282,7 @@ public final class Cloudgram implements ModInitializer {
 				// The snapshot is complete; a missing catalog only affects discovery on other devices.
 				LOG.warn("Cloudgram uploaded the snapshot but could not update the pinned catalog", e);
 			}
+			pruneVault(snapshot);
 			return true;
 		} catch (UploadException e) {
 			LOG.warn(
@@ -294,6 +296,33 @@ public final class Cloudgram implements ModInitializer {
 					snapshot.manifest().snapshot().id(),
 					e);
 			return false;
+		}
+	}
+
+	/**
+	 * Drops local copies of snapshots that Telegram already has.
+	 *
+	 * <p>The chat is the archive; the vault only needs a local copy of the most recent exits in case
+	 * a restore from the chat later turns out to be damaged. Only snapshots with both a manifest and
+	 * an upload record are eligible, so pending work is never deleted.
+	 */
+	private static void pruneVault(SnapshotResult snapshot) {
+		try {
+			VaultPruner.Result pruned = VaultPruner.pruneWorld(
+					vaultDir(), snapshot.manifest().world().id(), VaultPruner.KEEP_PER_WORLD);
+			if (pruned.deletedCount() > 0) {
+				LOG.info("Cloudgram pruned {} old local snapshot(s) for world {} ({} MiB freed);"
+								+ " Telegram keeps every snapshot",
+						pruned.deletedCount(), snapshot.manifest().world().name(),
+						pruned.bytesFreed() / (1024L * 1024L));
+			}
+			if (!pruned.failed().isEmpty()) {
+				LOG.warn("Cloudgram could not delete {} old local snapshot(s): {}",
+						pruned.failed().size(), pruned.failed());
+			}
+		} catch (IOException | RuntimeException e) {
+			// Housekeeping must never fail a backup that already reached the chat.
+			LOG.warn("Cloudgram could not prune the local vault", e);
 		}
 	}
 

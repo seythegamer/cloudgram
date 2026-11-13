@@ -63,6 +63,11 @@ processResources {
 	}
 }
 
+// GPL §4/§6: the licence text travels with the object code, not only with the repository.
+tasks.named('jar') {
+	from('LICENSE')
+}
+
 tasks.withType(JavaCompile).configureEach {
 	it.options.release = 25
 }

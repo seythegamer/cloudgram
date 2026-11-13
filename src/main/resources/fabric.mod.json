@@ -8,6 +8,7 @@
 	"authors": [
 		"sey"
 	],
+	"license": "GPL-3.0-or-later",
 	"environment": "client",
 	"entrypoints": {
 		"main": [

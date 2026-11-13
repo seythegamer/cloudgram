@@ -155,6 +155,18 @@ Snapshots are written to a local vault before upload:
 The manifest is written last; a directory without one is an incomplete run and is deleted by the
 producer. `safePackId` follows the rule in §5.
 
+### Local retention
+
+The chat is the archive; the vault is only working space. After a snapshot is successfully uploaded,
+Cloudgram keeps the newest three snapshots of that world locally and deletes older ones. Only a
+directory that has both a readable `manifest.json` and an `upload.json` is eligible, so a snapshot
+that is still packing, or that is waiting to be uploaded, is never pruned regardless of its age.
+Ordering uses `snapshot.createdAt` from the manifest, not the folder name. Telegram is never asked
+to delete anything: the remote copy is append-only and permanent.
+
+Keeping three rather than one leaves a local copy of the last few exits in case a restore from the
+chat later turns out to be damaged, without keeping a second full archive of every world forever.
+
 ### Upload order
 
 The upload queue sends, in this order:

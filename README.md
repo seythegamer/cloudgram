@@ -103,6 +103,13 @@ oldest first. This covers quitting the game while an upload is still running; a 
 waits up to two minutes for a pack that is still being written, so closing the window from inside a
 world does not lose that exit outright.
 
+Retention is asymmetric on purpose. Telegram keeps **every** snapshot forever; nothing is ever
+deleted from the chat. Locally, after a successful upload Cloudgram keeps the newest three snapshots
+of that world in the vault and removes older ones, because they are only a second copy of what the
+chat already holds. Snapshots that are still packing or still waiting for an upload are never
+removed, and neither are directories whose manifest cannot be read. The vault therefore stays bounded
+by three snapshots per world instead of growing by a full world copy on every exit.
+
 ## Catalog and restore
 
 The Bot API has no history endpoint, so the mod keeps one **pinned catalog** document in the chat.
@@ -160,4 +167,12 @@ export, the pinned catalog and restore-as-copy for both encrypted and legacy pla
 
 ## Licence
 
-TBD.
+Cloudgram is free software under the **GNU General Public License, version 3 or later**
+(`GPL-3.0-or-later`); the full text is in [`LICENSE`](LICENSE). In short: you may use, study, share
+and modify it, but anything you distribute that is based on it — including a fork published as a
+mod — must also be released under the GPL and with its source available.
+
+This is a Fabric client mod, not a Minecraft distribution. It contains no Mojang code, requires a
+legitimately purchased copy of Minecraft to run, and does not modify or redistribute the game; the
+GPL applies to Cloudgram's own source. Using the mod does not conflict with the Minecraft EULA or
+with Fabric's licensing, and the mod is not affiliated with or endorsed by Mojang or Fabric.
