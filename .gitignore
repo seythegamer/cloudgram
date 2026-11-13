@@ -7,3 +7,9 @@ run/
 *.ipr
 *.iws
 run-client*.log
+
+# Runtime data when the game directory is the repository root.
+# These hold the bot token, the recovery key and world backups.
+/cloudgram/
+/config/cloudgram.json
+/saves/
