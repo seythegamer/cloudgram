@@ -11,6 +11,7 @@ import dev.cloudgram.core.config.ConfigStore;
 import dev.cloudgram.core.crypto.EncryptionKey;
 import dev.cloudgram.core.crypto.PayloadCipher;
 import dev.cloudgram.core.telegram.HttpTelegramTransport;
+import dev.cloudgram.core.upload.PendingUploads;
 import dev.cloudgram.core.upload.SnapshotUploader;
 import dev.cloudgram.core.upload.UploadException;
 import dev.cloudgram.core.upload.UploadRecord;
@@ -24,11 +25,13 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class Cloudgram implements ModInitializer {
@@ -39,9 +42,24 @@ public final class Cloudgram implements ModInitializer {
 	private static final AtomicReference<ExecutorService> SNAPSHOT_EXECUTOR = new AtomicReference<>();
 	private static final AtomicReference<ExecutorService> UPLOAD_EXECUTOR = new AtomicReference<>();
 
+	/**
+	 * How long quitting the game waits for a snapshot that is still being packed.
+	 *
+	 * <p>Closing the window while in a world gives the pack thread only the few seconds the client
+	 * needs to shut down. Waiting here turns "no backup at all" into "packed locally, uploaded on
+	 * the next launch"; the bound keeps a huge world from holding the process open forever.
+	 */
+	private static final long EXIT_GRACE_SECONDS = 120L;
+
+	/** Pending uploads retried per launch, so a long offline stretch cannot flood the chat. */
+	private static final int MAX_RESUMED_PER_LAUNCH = 3;
+
 	@Override
 	public void onInitialize() {
 		ensureEncryptionKey();
+		Runtime.getRuntime().addShutdownHook(
+				new Thread(Cloudgram::awaitPackingBeforeExit, "cloudgram-exit"));
+		resumePendingUploads();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			Path worldDir = server.getWorldPath(LevelResource.ROOT);
@@ -164,6 +182,75 @@ public final class Cloudgram implements ModInitializer {
 			return;
 		}
 
+		uploadSnapshot(config, key, snapshot);
+	}
+
+	/**
+	 * Uploads snapshots that were packed on an earlier run but never reached Telegram.
+	 *
+	 * <p>Quitting the game straight from a world abandons the daemon upload thread. The snapshot is
+	 * already durable in the local vault, so the next launch finishes that upload instead of
+	 * silently losing the exit. Work runs on the same single-thread executor as live uploads, which
+	 * keeps catalog publishes serialized.
+	 */
+	private static void resumePendingUploads() {
+		uploadExecutor().execute(() -> {
+			CloudgramConfig config;
+			try {
+				config = ConfigStore.inDirectory(FabricLoader.getInstance().getConfigDir()).load();
+			} catch (IOException e) {
+				LOG.warn("Cloudgram could not read its config; pending uploads wait", e);
+				return;
+			}
+			if (!config.backupOnExit() || !config.hasBot() || !config.isBound()) {
+				return;
+			}
+
+			List<SnapshotResult> pending;
+			try {
+				pending = PendingUploads.find(vaultDir());
+			} catch (IOException e) {
+				LOG.warn("Cloudgram could not scan the vault for pending uploads", e);
+				return;
+			}
+			if (pending.isEmpty()) {
+				return;
+			}
+
+			EncryptionKey key;
+			try {
+				key = EncryptionKey.fromBase64(config.encryptionKey());
+			} catch (IllegalArgumentException e) {
+				LOG.warn("Cloudgram cannot resume uploads: the stored backup key is invalid ({})",
+						e.getMessage());
+				return;
+			}
+
+			int attempted = 0;
+			for (SnapshotResult snapshot : pending) {
+				if (attempted >= MAX_RESUMED_PER_LAUNCH) {
+					LOG.info("Cloudgram will finish the other {} pending snapshot(s) on a later launch",
+							pending.size() - attempted);
+					return;
+				}
+				attempted++;
+				LOG.info("Cloudgram resuming upload of {} from {}",
+						snapshot.manifest().snapshot().id(), snapshot.directory());
+				if (!uploadSnapshot(config, key, snapshot)) {
+					LOG.warn("Cloudgram paused pending uploads after a failure; the local vault copy is intact");
+					return;
+				}
+			}
+		});
+	}
+
+	/**
+	 * Uploads one vault snapshot and publishes it in the pinned catalog.
+	 *
+	 * @return whether the snapshot is now complete in the chat
+	 */
+	private static boolean uploadSnapshot(
+			CloudgramConfig config, EncryptionKey key, SnapshotResult snapshot) {
 		try {
 			UploadRecord record = new SnapshotUploader(
 					new HttpTelegramTransport(), new PayloadCipher(key))
@@ -190,16 +277,46 @@ public final class Cloudgram implements ModInitializer {
 				// The snapshot is complete; a missing catalog only affects discovery on other devices.
 				LOG.warn("Cloudgram uploaded the snapshot but could not update the pinned catalog", e);
 			}
+			return true;
 		} catch (UploadException e) {
 			LOG.warn(
 					"Cloudgram upload of {} failed; the local vault copy is intact",
 					snapshot.manifest().snapshot().id(),
 					e);
+			return false;
 		} catch (RuntimeException e) {
 			LOG.error(
 					"Cloudgram upload of {} failed unexpectedly; the local vault copy is intact",
 					snapshot.manifest().snapshot().id(),
 					e);
+			return false;
+		}
+	}
+
+	/**
+	 * Runs on JVM shutdown: gives a snapshot that is still packing a bounded chance to finish.
+	 *
+	 * <p>Without this, closing the game window while in a world kills the daemon pack thread
+	 * before it writes a manifest, so that exit has no backup anywhere.
+	 */
+	private static void awaitPackingBeforeExit() {
+		if (SNAPSHOTS_IN_FLIGHT.isEmpty()) {
+			return;
+		}
+		LOG.info("Cloudgram is finishing {} snapshot(s) before exit: {}",
+				SNAPSHOTS_IN_FLIGHT.size(), SNAPSHOTS_IN_FLIGHT);
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(EXIT_GRACE_SECONDS);
+		while (!SNAPSHOTS_IN_FLIGHT.isEmpty() && System.nanoTime() < deadline) {
+			try {
+				Thread.sleep(100L);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				return;
+			}
+		}
+		if (!SNAPSHOTS_IN_FLIGHT.isEmpty()) {
+			LOG.warn("Cloudgram gave up waiting for {} after {} s; that exit has no backup",
+					SNAPSHOTS_IN_FLIGHT, EXIT_GRACE_SECONDS);
 		}
 	}
 

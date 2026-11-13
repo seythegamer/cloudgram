@@ -219,6 +219,22 @@ never contains the bot token or the encryption key:
 the manifest is already in the chat. `encryption` and `keyFingerprint` are absent in records written
 before encryption existed; those snapshots are plaintext and must be handled as such by restore.
 
+### Resuming an interrupted upload
+
+The vault is the durable half of a backup, so `upload.json` doubles as a "done" marker. On startup
+Cloudgram scans `vault/<world>/<snapshot>/` and uploads every directory that has a `manifest.json`
+whose packs all exist at the recorded size and that has no `upload.json`. At most three pending
+snapshots are retried per launch, oldest first, and the run stops at the first failure so an offline
+PC does not hammer Telegram. Work goes through the same single-thread upload executor as live
+uploads, which keeps catalog publishes serialized.
+
+This matters most when the game is closed while still in a world: the shutdown hook below gives the
+pack a bounded grace period (120 s), and the next launch uploads whatever was packed but not sent.
+
+A JVM shutdown hook waits up to 120 s for an in-flight pack to finish, so closing the window from
+inside a world no longer leaves that exit with no backup at all. If the pack exceeds the grace
+period, the warning names the snapshot and the exit is lost; everything packed before it is intact.
+
 ## 7. Pinned catalog and snapshot index
 
 The Bot API has no history endpoint, so a fresh device cannot list the files in a chat. Cloudgram

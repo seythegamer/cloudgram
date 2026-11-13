@@ -93,6 +93,12 @@ Each uploaded snapshot also gets an `upload.json` next to its manifest, recordin
 message ids, file ids, the restore code, the encryption scheme and a short key fingerprint. It is
 never uploaded and never contains the bot token or the encryption key.
 
+Because that file is only written on success, it is also the marker for an unfinished upload. On
+startup Cloudgram retries up to three complete snapshots that have a manifest but no `upload.json`,
+oldest first. This covers quitting the game while an upload is still running; a shutdown hook also
+waits up to two minutes for a pack that is still being written, so closing the window from inside a
+world does not lose that exit outright.
+
 ## Catalog and restore
 
 The Bot API has no history endpoint, so the mod keeps one **pinned catalog** document in the chat.

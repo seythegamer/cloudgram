@@ -4,6 +4,7 @@
 	"version": "${version}",
 	"name": "Cloudgram",
 	"description": "Backs up your singleplayer worlds to your own Telegram chat.",
+	"icon": "assets/cloudgram/icon.png",
 	"authors": [
 		"sey"
 	],
