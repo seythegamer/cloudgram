@@ -49,7 +49,11 @@ the title screen):
 ```powershell
 .\gradlew.bat runClient '-Pcloudgram.selftest.openSetup=true'
 .\gradlew.bat runClient '-Pcloudgram.selftest.openRestore=true'
+.\gradlew.bat runClient '-Pcloudgram.selftest.openRestore=true' '-Pcloudgram.selftest.restoreFirst=true'
 ```
+
+The last one also starts a restore of the newest listed snapshot, which exercises the same path as
+clicking **Restore**; it writes to `run/saves/` under a free name.
 
 ## Connecting your bot
 

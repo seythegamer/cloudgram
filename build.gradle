@@ -47,7 +47,7 @@ def modVersion = project.version
  * {@code gradlew runClient -Pcloudgram.selftest.openRestore=true}.
  */
 tasks.matching { it.name == 'runClient' }.configureEach {
-	['openSetup', 'openRestore', 'leaveAfterTicks'].each { hook ->
+	['openSetup', 'openRestore', 'leaveAfterTicks', 'restoreFirst'].each { hook ->
 		def property = "cloudgram.selftest.${hook}"
 		if (project.hasProperty(property)) {
 			systemProperty property, project.property(property)

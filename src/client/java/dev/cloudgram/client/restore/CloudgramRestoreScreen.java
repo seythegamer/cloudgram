@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Lists the snapshots in the pinned Telegram catalog and restores one as a new save.
@@ -59,6 +60,8 @@ public final class CloudgramRestoreScreen extends Screen {
 		thread.setDaemon(true);
 		return thread;
 	});
+
+	private static final AtomicBoolean DEV_RESTORE_STARTED = new AtomicBoolean();
 
 	private final Screen parent;
 	private final ConfigStore configStore;
@@ -344,6 +347,7 @@ public final class CloudgramRestoreScreen extends Screen {
 							? "No snapshots yet. Leave a world on any device to add one."
 							: "Choose a snapshot. It will be restored as a new save.", COLOR_BODY);
 					refresh();
+					maybeRestoreFirstForSelfTest();
 				});
 			} catch (TelegramException e) {
 				onClient(() -> fail("Telegram: " + messageFor(e)));
@@ -357,6 +361,33 @@ public final class CloudgramRestoreScreen extends Screen {
 				onClient(() -> fail("Could not read the catalog: " + e.getMessage()));
 			}
 		});
+	}
+
+	/**
+	 * Development-only hook that starts the first listed restore, so the button path (progress,
+	 * widget rebuilds, status text) can be exercised without clicking.
+	 *
+	 * <p>Inert outside {@code fabric.development=true} and only active with
+	 * {@code -Dcloudgram.selftest.restoreFirst=true}.
+	 */
+	private void maybeRestoreFirstForSelfTest() {
+		if (!FabricLoader.getInstance().isDevelopmentEnvironment()) {
+			return;
+		}
+		if (!Boolean.getBoolean("cloudgram.selftest.restoreFirst")) {
+			return;
+		}
+		if (!DEV_RESTORE_STARTED.compareAndSet(false, true)) {
+			return;
+		}
+		List<Catalog.Snapshot> snapshots = sortedSnapshots();
+		if (snapshots.isEmpty()) {
+			return;
+		}
+		Catalog.Snapshot snapshot = snapshots.getFirst();
+		Cloudgram.LOG.info("Cloudgram self-test: restoring {} ({})",
+				snapshot.restoreCode(), snapshot.worldName());
+		restore(snapshot);
 	}
 
 	private void saveKey() {
