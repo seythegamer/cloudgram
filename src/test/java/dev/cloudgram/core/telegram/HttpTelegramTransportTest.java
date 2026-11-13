@@ -155,7 +155,7 @@ class HttpTelegramTransportTest {
 		assertEquals(2, updates.size());
 		assertEquals(41, updates.get(0).updateId());
 		assertEquals(42, updates.get(0).chatId());
-		assertEquals("sey", updates.get(0).chatTitle());
+		assertEquals("sey K", updates.get(0).chatTitle());
 		assertTrue(updates.get(0).isPrivate());
 		assertTrue(updates.get(0).isStartCommand());
 		assertEquals("Channel", updates.get(1).chatTitle());
