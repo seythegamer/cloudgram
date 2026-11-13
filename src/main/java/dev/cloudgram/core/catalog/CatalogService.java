@@ -27,6 +27,7 @@ public final class CatalogService {
 	public static final String FILE_NAME = "cloudgram_catalog.json";
 
 	private static final String CAPTION = "Cloudgram snapshot catalog";
+	private static final String INDEX_CAPTION = "Cloudgram snapshot index";
 
 	private final TelegramTransport transport;
 	private final PayloadCipher cipher;
@@ -95,9 +96,43 @@ public final class CatalogService {
 	public Fetched publishSnapshot(
 			String token, long chatId, SnapshotManifest manifest, UploadRecord record)
 			throws TelegramException, CryptoException, IOException {
+		if (manifest == null) {
+			throw new IllegalArgumentException("manifest is required");
+		}
+		if (record == null) {
+			throw new IllegalArgumentException("record is required");
+		}
 		Fetched current = fetch(token, chatId);
-		Catalog next = current.catalog().withSnapshot(Catalog.Snapshot.from(manifest, record));
+		Catalog.Snapshot entry = publishIndex(token, chatId, manifest, record);
+		Catalog next = current.catalog().withSnapshot(entry);
 		return publish(token, chatId, next, current.messageId());
+	}
+
+	/**
+	 * Uploads the immutable per-snapshot index and returns the small catalog entry pointing at it.
+	 *
+	 * <p>Doing this before the catalog publish means a failed index upload never produces an entry
+	 * that a restore cannot follow.
+	 */
+	private Catalog.Snapshot publishIndex(
+			String token, long chatId, SnapshotManifest manifest, UploadRecord record)
+			throws TelegramException {
+		String snapshotId = manifest.snapshot().id();
+		SnapshotIndex index = new SnapshotIndex(
+				SnapshotIndex.CURRENT_FORMAT, manifest, Catalog.Snapshot.packsFrom(record));
+		byte[] plain = index.toJson().getBytes(StandardCharsets.UTF_8);
+		byte[] encrypted = cipher.encrypt(plain, Aad.index(manifest.world().id(), snapshotId));
+		UploadedDocument document = transport.sendDocument(
+				token, chatId, SnapshotIndex.fileName(snapshotId), encrypted, INDEX_CAPTION);
+
+		return Catalog.Snapshot.indexed(
+				Catalog.Summary.from(manifest),
+				record.restoreCode(),
+				record.manifest().messageId(),
+				record.manifest().fileId(),
+				record.encryption(),
+				record.keyFingerprint(),
+				new Catalog.Index(document.messageId(), document.fileId()));
 	}
 
 	/** The catalog plus the message that currently holds it ({@code 0} when none). */

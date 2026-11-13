@@ -102,7 +102,7 @@ the wizard. Rotating the bot token does not change the backup key.
 ## What the bot can see
 
 The mod only calls `getUpdates` to find the `/start` message during setup. It uses `getChat` to read
-the pinned catalog, `getFile` and the file endpoint to download snapshot parts, and
+the pinned catalog, `getFile` and the file endpoint to download a snapshot's index and its parts, and
 `pinChatMessage`/`deleteMessage` to keep exactly one catalog pinned. It does not read or store other
-messages, and it has no commands. In the other direction it sends backup uploads and status messages
-to the bound chat.
+messages, and it has no commands. In the other direction it sends backup uploads, the per-snapshot
+index and status messages to the bound chat.

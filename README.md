@@ -96,10 +96,12 @@ never uploaded and never contains the bot token or the encryption key.
 ## Catalog and restore
 
 The Bot API has no history endpoint, so the mod keeps one **pinned catalog** document in the chat.
-After every successful upload it fetches the catalog, adds or replaces the snapshot entry (with the
-full manifest and every part's `file_id`), uploads a new encrypted `cloudgram_catalog.json`, pins
-it, and deletes the superseded catalog message. A failed catalog update never invalidates the
-snapshot; the next upload repairs it.
+After every successful upload it first stores an immutable per-snapshot **index** (the manifest plus
+every part's `file_id`), then fetches the catalog, adds or replaces the snapshot summary, uploads a
+new encrypted `cloudgram_catalog.json`, pins it, and deletes the superseded catalog message. Keeping
+the manifest out of the catalog means the pinned document grows by a few hundred bytes per snapshot
+instead of by megabytes, so discovery keeps working for a chat with thousands of backups. A failed
+catalog update never invalidates the snapshot; the next upload repairs it.
 
 On any device:
 

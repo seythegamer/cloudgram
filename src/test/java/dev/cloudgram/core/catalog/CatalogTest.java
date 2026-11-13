@@ -105,7 +105,49 @@ class CatalogTest {
 		assertThrows(IllegalArgumentException.class,
 				() -> new Catalog(Catalog.CURRENT_FORMAT, -1L, List.of()));
 		assertThrows(IllegalArgumentException.class,
-				() -> new Catalog.Snapshot(manifest(), " ", 1L, "file", null, null, List.of()));
+				() -> new Catalog.Snapshot(manifest(), " ", 1L, "file", null, null, List.of(), null, null));
+		assertThrows(IllegalArgumentException.class,
+				() -> new Catalog.Snapshot(null, "CG1-1", 1L, "file", null, null, List.of(), null, null));
+		assertThrows(IllegalArgumentException.class,
+				() -> Catalog.Snapshot.indexed(
+						new Catalog.Summary(WORLD_ID, SNAPSHOT_ID, "Survival", 0L, 1, 1L),
+						"CG1-1", 1L, "file", null, null, null));
+	}
+
+	@Test
+	void indexedEntriesRoundTripWithoutEmbeddingTheManifest() throws Exception {
+		Catalog.Snapshot indexed = Catalog.Snapshot.indexed(
+				new Catalog.Summary(WORLD_ID, SNAPSHOT_ID, "Survival", 1_800_000_000L, 2, 10L),
+				"CG1-30",
+				30L,
+				"manifest-file-id",
+				"aes-256-gcm/v1",
+				"335ecb5127723917",
+				new Catalog.Index(31L, "index-file-id"));
+
+		Catalog.Snapshot entry = Catalog.fromJson(
+				Catalog.empty().withSnapshot(indexed, 5L).toJson()).snapshots().getFirst();
+
+		assertNull(entry.manifest(), "an indexed entry does not repeat the manifest");
+		assertTrue(entry.isIndexed());
+		assertEquals(31L, entry.index().messageId());
+		assertEquals("index-file-id", entry.index().fileId());
+		assertEquals(WORLD_ID, entry.worldId());
+		assertEquals(SNAPSHOT_ID, entry.snapshotId());
+		assertEquals("Survival", entry.worldName());
+		assertEquals(1_800_000_000L, entry.createdAt());
+		assertEquals(2, entry.files());
+		assertEquals(10L, entry.packBytes());
+	}
+
+	@Test
+	void legacyEntriesStillCarryTheirEmbeddedManifest() throws Exception {
+		Catalog.Snapshot entry = Catalog.fromJson(
+				Catalog.empty().withSnapshot(snapshot("CG1-2", 2), 1L).toJson()).snapshots().getFirst();
+
+		assertNotNull(entry.manifest());
+		assertFalse(entry.isIndexed());
+		assertEquals("meta", entry.packs().getFirst().id());
 	}
 
 	private static Catalog.Snapshot snapshot(String restoreCode, long manifestMessageId) {
@@ -116,7 +158,9 @@ class CatalogTest {
 				"manifest-file-id",
 				"aes-256-gcm/v1",
 				"335ecb5127723917",
-				List.of(new Catalog.Pack("meta", List.of(new Catalog.Part(0, 10L, "part-file-id")))));
+				List.of(new Catalog.Pack("meta", List.of(new Catalog.Part(0, 10L, "part-file-id")))),
+				null,
+				null);
 	}
 
 	private static Catalog.Snapshot snapshot(String worldId, String restoreCode, long messageId) {
@@ -127,7 +171,9 @@ class CatalogTest {
 				"manifest-file-id",
 				"aes-256-gcm/v1",
 				"335ecb5127723917",
-				List.of());
+				List.of(),
+				null,
+				null);
 	}
 
 	private static SnapshotManifest manifest() {

@@ -31,6 +31,13 @@ public final class Aad {
 		return text(PREFIX + "|" + PayloadCipher.SCHEME + "|manifest|" + worldId + "|" + snapshotId);
 	}
 
+	/** The per-snapshot index that maps every part to its Telegram file id. */
+	public static byte[] index(String worldId, String snapshotId) {
+		require("worldId", worldId);
+		require("snapshotId", snapshotId);
+		return text(PREFIX + "|" + PayloadCipher.SCHEME + "|index|" + worldId + "|" + snapshotId);
+	}
+
 	/** The pinned catalog is mutable and bound to exactly one chat. */
 	public static byte[] catalog(long chatId) {
 		if (chatId <= 0) {

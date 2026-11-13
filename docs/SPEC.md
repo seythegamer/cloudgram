@@ -219,11 +219,12 @@ never contains the bot token or the encryption key:
 the manifest is already in the chat. `encryption` and `keyFingerprint` are absent in records written
 before encryption existed; those snapshots are plaintext and must be handled as such by restore.
 
-## 7. Pinned catalog
+## 7. Pinned catalog and snapshot index
 
 The Bot API has no history endpoint, so a fresh device cannot list the files in a chat. Cloudgram
 publishes one **pinned catalog document** per chat; `getChat` returns it as `pinned_message`, and it
-is the only discovery channel:
+is the only discovery channel. It holds a small summary per snapshot and points at an immutable
+**snapshot index** document that carries the details:
 
 ```json
 {
@@ -231,31 +232,50 @@ is the only discovery channel:
   "updatedAt": 1762900000000,
   "snapshots": [
     {
-      "manifest": { "format": "cloudgram/snapshot/1", "…": "the full manifest" },
+      "summary": {
+        "worldId": "0f3c9a2e-…",
+        "snapshotId": "20261111T230000Z-a1b2c3",
+        "worldName": "Survival",
+        "createdAt": 1762898400,
+        "files": 8123,
+        "packBytes": 9663676416
+      },
       "restoreCode": "CG1-42",
       "manifestMessageId": 42,
       "manifestFileId": "BQAC…",
       "encryption": "aes-256-gcm/v1",
       "keyFingerprint": "9c1f00a7b3d24e88",
-      "packs": [
-        { "id": "cell:0:0", "parts": [ { "index": 0, "messageId": 40, "fileId": "BQAC…" } ] }
-      ]
+      "index": { "messageId": 43, "fileId": "BQAC…" }
     }
   ]
 }
 ```
 
-- The document is encrypted like every other object, with AAD `catalog | <chatId>`, and uploaded as
-  `cloudgram_catalog.json`.
-- After each successful snapshot upload the mod fetches the current catalog, adds or replaces the
-  entry for that world and snapshot, uploads the new document, pins it, and deletes the superseded
-  catalog message.
+```json
+{
+  "format": "cloudgram/index/1",
+  "manifest": { "format": "cloudgram/snapshot/1", "…": "the full manifest" },
+  "packs": [
+    { "id": "cell:0:0", "parts": [ { "index": 0, "messageId": 40, "fileId": "BQAC…" } ] }
+  ]
+}
+```
+
+- The catalog is encrypted with AAD `catalog | <chatId>` and uploaded as `cloudgram_catalog.json`.
+  The index is encrypted with AAD `index | <worldId> | <snapshotId>` and uploaded once per snapshot
+  as `cloudgram_index_<snapshotId>.json`.
+- Keeping the manifest and part ids out of the catalog is what bounds its size: the pinned document
+  grows by roughly 250 bytes per snapshot instead of by the whole manifest, so a chat can hold
+  thousands of snapshots without approaching Telegram's 20 MB download limit.
+- After each successful snapshot upload the mod uploads the index first, then fetches the current
+  catalog, adds or replaces the entry for that world and snapshot, uploads the new document, pins
+  it, and deletes the superseded catalog message. A failed index upload never produces an entry.
 - Publishing is best-effort: a snapshot is complete once its manifest is in the chat, so a failed
   catalog update never invalidates a backup; the next upload repairs it.
 - A pinned text message (the setup greeting) or a pinned document with another name means "no
   catalog yet"; Cloudgram never overwrites an unrelated pin.
-- `manifest` is embedded so a restore knows every pack hash before downloading anything. The
-  manifest document itself remains in the chat for audit and is not needed by the catalog path.
+- Catalogs written before the index existed embed `manifest` and `packs` directly. Both shapes are
+  read and restored through the same path; only new entries are indexed.
 - `encryption` is absent for entries created from pre-encryption uploads; their parts are plaintext.
 
 ## 8. Restore
@@ -263,14 +283,16 @@ is the only discovery channel:
 Restore never overwrites an existing world:
 
 1. Fetch the pinned catalog and decrypt it with the installation's recovery key.
-2. Build the world in a temporary directory below `saves/` (`.cloudgram-restore-*`).
-3. For each pack, download every part (`getFile` + `/file/bot…`), decrypt when the catalog entry is
+2. For an indexed entry, download and decrypt its snapshot index to learn the manifest and the part
+   file ids. A legacy entry already carries both.
+3. Build the world in a temporary directory below `saves/` (`.cloudgram-restore-*`).
+4. For each pack, download every part (`getFile` + `/file/bot…`), decrypt when the catalog entry is
    encrypted, verify the part SHA-256 and size, concatenate, verify the pack SHA-256 and size, then
    extract into the temporary world directory. Pack entry names are untrusted: absolute paths,
    `..` and duplicate entries are rejected.
-4. Verify that the total file count equals `manifest.stats.files`, and that
+5. Verify that the total file count equals `manifest.stats.files`, and that
    `.cloudgram/world.json` carries the catalog's world id (write it if an old snapshot predates it).
-5. Move the temporary world to a unique name (`Survival`, `Survival (Cloudgram 2)`, …) and delete
+6. Move the temporary world to a unique name (`Survival`, `Survival (Cloudgram 2)`, …) and delete
    the temporary directory on any failure.
 
 Downloads retry rate limits, network errors and 5xx with backoff. The 20 MB `getFile` limit is why

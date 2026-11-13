@@ -9,6 +9,7 @@ import dev.cloudgram.core.SnapshotResult;
 import dev.cloudgram.core.SnapshotService;
 import dev.cloudgram.core.WorldIdentity;
 import dev.cloudgram.core.catalog.Catalog;
+import dev.cloudgram.core.catalog.SnapshotIndex;
 import dev.cloudgram.core.crypto.Aad;
 import dev.cloudgram.core.crypto.EncryptionKey;
 import dev.cloudgram.core.crypto.PayloadCipher;
@@ -79,6 +80,38 @@ class RestoreServiceTest {
 	}
 
 	@Test
+	void restoresAnIndexedSnapshot() throws Exception {
+		Path world = createWorld("Survival");
+		SnapshotResult snapshot = capture(world);
+		PayloadCipher cipher = new PayloadCipher(EncryptionKey.generate());
+		Fixture fixture = upload(snapshot, cipher, true);
+		Catalog.Snapshot indexed = indexed(fixture, cipher, "index-file");
+
+		RestoreResult result = service(fixture.transport, cipher)
+				.restore(TOKEN, indexed, tempDir.resolve("saves"), null);
+
+		assertEquals(snapshot.manifest().stats().files(), result.files());
+		assertSamePackedFiles(world, result.directory());
+	}
+
+	@Test
+	void aTamperedIndexFailsBeforeAnyPartIsUsed() throws Exception {
+		Path world = createWorld("Survival");
+		SnapshotResult snapshot = capture(world);
+		PayloadCipher cipher = new PayloadCipher(EncryptionKey.generate());
+		Fixture fixture = upload(snapshot, cipher, true);
+		Catalog.Snapshot indexed = indexed(fixture, cipher, "index-file");
+		byte[] bytes = fixture.transport.files.get("index-file");
+		bytes[bytes.length - 1] ^= 0x01;
+		Path saves = tempDir.resolve("saves");
+
+		assertThrows(RestoreException.class,
+				() -> service(fixture.transport, cipher).restore(TOKEN, indexed, saves, null));
+
+		assertDirectoryEmpty(saves);
+	}
+
+	@Test
 	void neverOverwritesAnExistingSave() throws Exception {
 		Path world = createWorld("Survival");
 		SnapshotResult snapshot = capture(world);
@@ -142,7 +175,9 @@ class RestoreServiceTest {
 				fixture.catalog.manifestFileId(),
 				fixture.catalog.encryption(),
 				fixture.catalog.keyFingerprint(),
-				List.of());
+				List.of(),
+				null,
+				null);
 
 		assertThrows(RestoreException.class,
 				() -> service(fixture.transport, cipher)
@@ -209,6 +244,24 @@ class RestoreServiceTest {
 				encrypted ? PayloadCipher.SCHEME : null,
 				encrypted ? cipher.keyFingerprint() : null);
 		return new Fixture(transport, Catalog.Snapshot.from(snapshot.manifest(), record));
+	}
+
+	/** Wraps an uploaded snapshot in the indexed shape a real catalog now uses. */
+	private static Catalog.Snapshot indexed(Fixture fixture, PayloadCipher cipher, String indexFileId) {
+		Catalog.Snapshot embedded = fixture.catalog;
+		SnapshotIndex index = new SnapshotIndex(
+				SnapshotIndex.CURRENT_FORMAT, embedded.manifest(), embedded.packs());
+		fixture.transport.files.put(indexFileId, cipher.encrypt(
+				index.toJson().getBytes(StandardCharsets.UTF_8),
+				Aad.index(embedded.worldId(), embedded.snapshotId())));
+		return Catalog.Snapshot.indexed(
+				Catalog.Summary.from(embedded.manifest()),
+				embedded.restoreCode(),
+				embedded.manifestMessageId(),
+				embedded.manifestFileId(),
+				embedded.encryption(),
+				embedded.keyFingerprint(),
+				new Catalog.Index(999L, indexFileId));
 	}
 
 	private static void assertSamePackedFiles(Path original, Path restored) throws IOException {

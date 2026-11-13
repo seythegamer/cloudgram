@@ -440,8 +440,8 @@ public final class CloudgramRestoreScreen extends Screen {
 		String date = snapshot.createdAt() > 0
 				? DATE.format(Instant.ofEpochSecond(snapshot.createdAt()))
 				: "unknown date";
-		return date + "   " + snapshot.manifest().stats().files() + " files   "
-				+ String.format(Locale.ROOT, "%.1f", snapshot.manifest().stats().packBytes() / 1048576.0)
+		return date + "   " + snapshot.files() + " files   "
+				+ String.format(Locale.ROOT, "%.1f", snapshot.packBytes() / 1048576.0)
 				+ " MiB   " + snapshot.snapshotId();
 	}
 

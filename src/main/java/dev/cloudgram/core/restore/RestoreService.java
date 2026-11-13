@@ -6,6 +6,7 @@ import dev.cloudgram.core.SnapshotManifest;
 import dev.cloudgram.core.WorldIdentity;
 import dev.cloudgram.core.catalog.Catalog;
 import dev.cloudgram.core.catalog.CatalogService;
+import dev.cloudgram.core.catalog.SnapshotIndex;
 import dev.cloudgram.core.crypto.Aad;
 import dev.cloudgram.core.crypto.CryptoException;
 import dev.cloudgram.core.crypto.PayloadCipher;
@@ -16,6 +17,7 @@ import dev.cloudgram.core.telegram.TelegramTransport;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -91,9 +93,10 @@ public final class RestoreService {
 		}
 		Progress status = progress == null ? Progress.NONE : progress;
 
-		List<SnapshotManifest.PackRef> manifestPacks = snapshot.manifest().packs();
+		Resolved resolved = resolve(token, snapshot);
+		List<SnapshotManifest.PackRef> manifestPacks = resolved.manifest().packs();
 		Map<String, Catalog.Pack> objects = new HashMap<>();
-		for (Catalog.Pack pack : snapshot.packs()) {
+		for (Catalog.Pack pack : resolved.packs()) {
 			if (objects.put(pack.id(), pack) != null) {
 				throw new RestoreException("The catalog lists pack " + pack.id() + " twice");
 			}
@@ -155,9 +158,9 @@ public final class RestoreService {
 				Files.deleteIfExists(packFile);
 			}
 
-			if (snapshot.manifest().stats().files() != files) {
+			if (resolved.manifest().stats().files() != files) {
 				throw new RestoreException("Restored " + files + " files, but the manifest lists "
-						+ snapshot.manifest().stats().files());
+						+ resolved.manifest().stats().files());
 			}
 			ensureIdentity(worldDir, snapshot);
 
@@ -172,10 +175,51 @@ public final class RestoreService {
 		}
 	}
 
+	/**
+	 * Loads the manifest and part locations for a snapshot.
+	 *
+	 * <p>Indexed entries point at a separate encrypted {@link SnapshotIndex}; older catalogs embed
+	 * the same data directly, so both shapes restore through one code path.
+	 */
+	private Resolved resolve(String token, Catalog.Snapshot snapshot) throws RestoreException {
+		if (!snapshot.isIndexed()) {
+			return new Resolved(snapshot.manifest(), snapshot.packs());
+		}
+
+		Catalog.Index indexRef = snapshot.index();
+		RemoteFile file = withRetries(
+				"Could not locate the snapshot index",
+				() -> transport.getFile(token, indexRef.fileId()));
+		byte[] raw = withRetries(
+				"Could not download the snapshot index",
+				() -> transport.downloadFile(token, file.filePath()));
+		if (!PayloadCipher.isEncrypted(raw)) {
+			throw new RestoreException("The snapshot index is not encrypted");
+		}
+
+		byte[] plain;
+		try {
+			plain = cipher.decrypt(raw, Aad.index(snapshot.worldId(), snapshot.snapshotId()));
+		} catch (CryptoException e) {
+			throw new RestoreException(
+					"The snapshot index cannot be decrypted with this recovery key", e);
+		}
+		SnapshotIndex index;
+		try {
+			index = SnapshotIndex.fromJson(new String(plain, StandardCharsets.UTF_8));
+		} catch (IOException e) {
+			throw new RestoreException("The snapshot index is unreadable: " + e.getMessage(), e);
+		}
+		if (!index.manifest().world().id().equals(snapshot.worldId())
+				|| !index.manifest().snapshot().id().equals(snapshot.snapshotId())) {
+			throw new RestoreException("The snapshot index belongs to another snapshot");
+		}
+		return new Resolved(index.manifest(), index.packs());
+	}
+
 	private byte[] downloadPart(
 			String token, Catalog.Snapshot snapshot, String packId,
-			SnapshotManifest.PartRef part, Catalog.Part remote) throws RestoreException, CryptoException {
-		RemoteFile file = withRetries(
+			SnapshotManifest.PartRef part, Catalog.Part remote) throws RestoreException, CryptoException {		RemoteFile file = withRetries(
 				"Could not locate part " + part.index() + " of " + packId,
 				() -> transport.getFile(token, remote.fileId()));
 		byte[] raw = withRetries(
@@ -326,6 +370,10 @@ public final class RestoreService {
 	@FunctionalInterface
 	public interface Sleeper {
 		void sleep(long millis) throws InterruptedException;
+	}
+
+	/** The manifest plus part locations, whether embedded in the catalog or in an index. */
+	private record Resolved(SnapshotManifest manifest, List<Catalog.Pack> packs) {
 	}
 
 	/** Coarse progress for the restore screen. */

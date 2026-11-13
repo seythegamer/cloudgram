@@ -103,7 +103,15 @@ public record Catalog(String format, long updatedAt, List<Snapshot> snapshots) {
 		return catalog;
 	}
 
-	/** One snapshot's remote objects. The manifest is embedded so restore is self-contained. */
+	/**
+	 * One snapshot's remote objects.
+	 *
+	 * <p>Two shapes are accepted. An <em>indexed</em> entry carries a small {@link Summary} plus the
+	 * file id of an encrypted {@link SnapshotIndex} document that holds the manifest and every
+	 * part's file id, so the pinned catalog stays small no matter how many snapshots the chat holds.
+	 * A <em>legacy</em> entry embeds the manifest and parts directly; catalogs written before the
+	 * index existed remain readable.
+	 */
 	public record Snapshot(
 			SnapshotManifest manifest,
 			String restoreCode,
@@ -111,11 +119,13 @@ public record Catalog(String format, long updatedAt, List<Snapshot> snapshots) {
 			String manifestFileId,
 			String encryption,
 			String keyFingerprint,
-			List<Pack> packs) {
+			List<Pack> packs,
+			Summary summary,
+			Index index) {
 
 		public Snapshot {
-			if (manifest == null) {
-				throw new IllegalArgumentException("manifest is required");
+			if (manifest == null && summary == null) {
+				throw new IllegalArgumentException("manifest or summary is required");
 			}
 			if (restoreCode == null || restoreCode.isBlank()) {
 				throw new IllegalArgumentException("restoreCode is required");
@@ -136,34 +146,84 @@ public record Catalog(String format, long updatedAt, List<Snapshot> snapshots) {
 		}
 
 		public String worldId() {
-			return manifest.world().id();
+			return summary != null ? summary.worldId() : manifest.world().id();
 		}
 
 		public String worldName() {
-			return manifest.world().name();
+			return summary != null ? summary.worldName() : manifest.world().name();
 		}
 
 		public String snapshotId() {
-			return manifest.snapshot().id();
+			return summary != null ? summary.snapshotId() : manifest.snapshot().id();
 		}
 
 		public long createdAt() {
-			return manifest.snapshot().createdAt();
+			return summary != null ? summary.createdAt() : manifest.snapshot().createdAt();
+		}
+
+		public int files() {
+			return summary != null ? summary.files() : manifest.stats().files();
+		}
+
+		public long packBytes() {
+			return summary != null ? summary.packBytes() : manifest.stats().packBytes();
 		}
 
 		public boolean isEncrypted() {
 			return encryption != null;
 		}
 
+		/** True when the manifest and the part file ids live in a separate index document. */
+		public boolean isIndexed() {
+			return index != null;
+		}
+
 		public boolean sameSnapshot(Snapshot other) {
 			return worldId().equals(other.worldId()) && snapshotId().equals(other.snapshotId());
 		}
 
-		/** Builds the catalog entry from the manifest and the uploader's record. */
+		/** Builds a legacy entry that embeds the manifest and the part locations. */
 		public static Snapshot from(SnapshotManifest manifest, UploadRecord record) {
 			if (manifest == null) {
 				throw new IllegalArgumentException("manifest is required");
 			}
+			if (record == null) {
+				throw new IllegalArgumentException("record is required");
+			}
+			return new Snapshot(
+					manifest,
+					record.restoreCode(),
+					record.manifest().messageId(),
+					record.manifest().fileId(),
+					record.encryption(),
+					record.keyFingerprint(),
+					packsFrom(record),
+					null,
+					null);
+		}
+
+		/** Builds an entry that points at a separately uploaded {@link SnapshotIndex}. */
+		public static Snapshot indexed(
+				Summary summary,
+				String restoreCode,
+				long manifestMessageId,
+				String manifestFileId,
+				String encryption,
+				String keyFingerprint,
+				Index index) {
+			if (summary == null) {
+				throw new IllegalArgumentException("summary is required");
+			}
+			if (index == null) {
+				throw new IllegalArgumentException("index is required");
+			}
+			return new Snapshot(
+					null, restoreCode, manifestMessageId, manifestFileId, encryption, keyFingerprint,
+					List.of(), summary, index);
+		}
+
+		/** The part locations recorded by the uploader, in manifest part order. */
+		public static List<Pack> packsFrom(UploadRecord record) {
 			if (record == null) {
 				throw new IllegalArgumentException("record is required");
 			}
@@ -176,14 +236,7 @@ public record Catalog(String format, long updatedAt, List<Snapshot> snapshots) {
 				}
 				packs.add(new Pack(uploaded.id(), parts));
 			}
-			return new Snapshot(
-					manifest,
-					record.restoreCode(),
-					record.manifest().messageId(),
-					record.manifest().fileId(),
-					record.encryption(),
-					record.keyFingerprint(),
-					packs);
+			return packs;
 		}
 	}
 
@@ -203,6 +256,65 @@ public record Catalog(String format, long updatedAt, List<Snapshot> snapshots) {
 			if (index < 0) {
 				throw new IllegalArgumentException("index must not be negative");
 			}
+			if (messageId <= 0) {
+				throw new IllegalArgumentException("messageId must be positive");
+			}
+			if (fileId == null || fileId.isBlank()) {
+				throw new IllegalArgumentException("fileId is required");
+			}
+		}
+	}
+
+	/**
+	 * The few fields the restore list needs, kept in the catalog so it never has to download an
+	 * index just to show a snapshot.
+	 */
+	public record Summary(
+			String worldId,
+			String snapshotId,
+			String worldName,
+			long createdAt,
+			int files,
+			long packBytes) {
+
+		public Summary {
+			if (worldId == null || worldId.isBlank()) {
+				throw new IllegalArgumentException("worldId is required");
+			}
+			if (snapshotId == null || snapshotId.isBlank()) {
+				throw new IllegalArgumentException("snapshotId is required");
+			}
+			if (worldName == null || worldName.isBlank()) {
+				throw new IllegalArgumentException("worldName is required");
+			}
+			if (createdAt < 0) {
+				throw new IllegalArgumentException("createdAt must not be negative");
+			}
+			if (files < 0) {
+				throw new IllegalArgumentException("files must not be negative");
+			}
+			if (packBytes < 0) {
+				throw new IllegalArgumentException("packBytes must not be negative");
+			}
+		}
+
+		public static Summary from(SnapshotManifest manifest) {
+			if (manifest == null) {
+				throw new IllegalArgumentException("manifest is required");
+			}
+			return new Summary(
+					manifest.world().id(),
+					manifest.snapshot().id(),
+					manifest.world().name(),
+					manifest.snapshot().createdAt(),
+					manifest.stats().files(),
+					manifest.stats().packBytes());
+		}
+	}
+
+	/** The encrypted {@link SnapshotIndex} document that belongs to one snapshot. */
+	public record Index(long messageId, String fileId) {
+		public Index {
 			if (messageId <= 0) {
 				throw new IllegalArgumentException("messageId must be positive");
 			}

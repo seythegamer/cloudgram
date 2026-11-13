@@ -28,6 +28,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -111,6 +112,41 @@ class CatalogServiceTest {
 	}
 
 	@Test
+	void publishSnapshotUploadsAnEncryptedIndexAndKeepsTheCatalogSmall() throws Exception {
+		SnapshotManifest manifest = manifest("20261111T230000Z-cccccc");
+		UploadRecord record = record(manifest, "CG1-30", 30L);
+
+		CatalogService.Fetched published = service.publishSnapshot(TOKEN, CHAT_ID, manifest, record);
+
+		assertEquals(2, transport.uploads.size(), "the index document is uploaded before the catalog");
+		UploadedDocument indexUpload = transport.uploads.get(0);
+		assertEquals(SnapshotIndex.fileName(manifest.snapshot().id()), indexUpload.fileName());
+
+		byte[] indexBytes = transport.files.get(indexUpload.fileId());
+		assertTrue(PayloadCipher.isEncrypted(indexBytes), "the index must never leave in plaintext");
+		SnapshotIndex index = SnapshotIndex.fromJson(new String(
+				cipher.decrypt(indexBytes, Aad.index(WORLD_ID, manifest.snapshot().id())),
+				StandardCharsets.UTF_8));
+		assertEquals(manifest, index.manifest());
+		assertEquals("meta", index.packs().getFirst().id());
+
+		UploadedDocument catalogUpload = transport.uploads.get(1);
+		String catalogJson = new String(
+				cipher.decrypt(transport.files.get(catalogUpload.fileId()), Aad.catalog(CHAT_ID)),
+				StandardCharsets.UTF_8);
+		assertFalse(catalogJson.contains("\"manifest\""),
+				"the mutable catalog must not embed the manifest");
+
+		Catalog.Snapshot entry = published.catalog().findByRestoreCode("CG1-30");
+		assertTrue(entry.isIndexed());
+		assertNull(entry.manifest());
+		assertEquals(indexUpload.messageId(), entry.index().messageId());
+		assertEquals(indexUpload.fileId(), entry.index().fileId());
+		assertEquals("Survival", entry.worldName());
+		assertEquals(1, entry.files());
+	}
+
+	@Test
 	void rejectsInvalidConfiguration() {
 		assertThrows(IllegalArgumentException.class,
 				() -> new CatalogService(null, cipher));
@@ -127,7 +163,9 @@ class CatalogServiceTest {
 				"manifest-" + messageId,
 				PayloadCipher.SCHEME,
 				"335ecb5127723917",
-				List.of(new Catalog.Pack("meta", List.of(new Catalog.Part(0, messageId - 1, "part-" + messageId)))));
+				List.of(new Catalog.Pack("meta", List.of(new Catalog.Part(0, messageId - 1, "part-" + messageId)))),
+				null,
+				null);
 	}
 
 	private static SnapshotManifest manifest(String snapshotId) {
