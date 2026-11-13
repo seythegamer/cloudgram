@@ -9,6 +9,10 @@
 		"sey"
 	],
 	"license": "GPL-3.0-or-later",
+	"contact": {
+		"sources": "https://github.com/seythegamer/cloudgram",
+		"issues": "https://github.com/seythegamer/cloudgram/issues"
+	},
 	"environment": "client",
 	"entrypoints": {
 		"main": [
